@@ -34,7 +34,7 @@ An ER is a temporary sidechain that runs on Solana validators. You **delegate** 
 |--------|----------|--------|
 | US | devnet-us.magicblock.app | `MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd` |
 | EU | devnet-eu.magicblock.app | `MEUGGrYPxKk17hCr7wpT6s8dtNokZj5U2L57vjYMS8e` |
-| Asia | devnet-as.magicblock.app | `MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57` |
+| Asia | devnet-as.magicblock.app | `MAS1Dt9qreoRMQ14YUHg8UTZMMzDdKhmkZMECCzk57` |
 | TEE | tee.magicblock.app | `FnE6VJT5QNZdedZZnCoLsARgBwoE6DeJNjBs2H1gySXA` |
 
 ## Required Dependencies

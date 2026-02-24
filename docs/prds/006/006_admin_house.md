@@ -21,6 +21,64 @@
 
 ---
 
+## delegate_admin
+
+**Purpose:** Admin delegates authority to agent (crank) so agent can run rounds without admin signatures.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `agent` | Pubkey | Agent/crank public key |
+
+**Accounts:**
+- `config` — PDA ["config"]
+- `admin` — signer (must be config.admin)
+
+**Logic:**
+1. Validate signer == config.admin
+2. Set config.agent = agent pubkey
+3. After this, agent can call all admin instructions
+
+**Usage:** Run once after initialize. Agent then runs everything on ER.
+
+---
+
+## fund_house
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `amount` | u64 | SOL to add to house vault |
+
+**Accounts:**
+- `house` — PDA ["house"]
+- `admin` — signer (must be config.admin)
+- `system_program` — transfer
+
+**Logic:**
+1. Validate admin == config.admin
+2. Transfer amount from admin → House PDA
+
+---
+
+## sweep_vault
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `round_id` | u64 | Round to sweep |
+
+**Accounts:**
+- `vault` — PDA ["vault", round_id]
+- `house` — PDA ["house"]
+- `admin` — signer
+
+**Logic:**
+1. Validate round.status == Settled
+2. Transfer all SOL from vault → house
+3. Close vault, return rent
+
+**Use case:** After draw, move bets back to house.
+
+---
+
 ## close_bet
 
 | Param | Type |
@@ -42,15 +100,17 @@
 
 ## Admin-Only Instructions
 
-These require `config.admin == signer`:
+These require `config.admin == signer OR config.agent == signer`:
 
-| Instruction | Why Admin Only |
-|-------------|----------------|
+| Instruction | Why Admin/Agent |
+|-------------|-----------------|
 | `create_round` | Control game timing |
 | `delegate_round` | Start ER session |
 | `close_betting` | Trigger game start |
 | `settle_and_undelegate` | End game |
 | `initialize` | One-time setup |
+| `fund_house` | Add house funds |
+| `sweep_vault` | Collect vault funds |
 
 ---
 
@@ -88,3 +148,7 @@ struct House {
 - Clear admin boundary
 - House solvency checks
 - Rent cleanup via close_bet
+
+**Added after CEO review:**
+- `fund_house` instruction for admin to add SOL
+- Balance check on place_bet

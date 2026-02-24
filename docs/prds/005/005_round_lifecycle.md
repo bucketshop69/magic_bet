@@ -11,7 +11,7 @@ Round states: `Active` → `InProgress` → `Settled`
 | Param | Type | Description |
 |-------|------|-------------|
 | `round_id` | u64 | Unique ID (increment from config) |
-| `start_time` | i64 | Unix timestamp |
+| `duration` | i64 | Betting duration in seconds (e.g., 180 = 3 min) |
 
 **Accounts:**
 
@@ -22,8 +22,10 @@ Round states: `Active` → `InProgress` → `Settled`
 
 1. Get current round_id from Config
 2. Create Round PDA with status = Active
-3. Initialize: empty boards, both snakes alive, scores 0, pools 0
-4. Increment config.round_id
+3. Set start_time = Clock::now(), end_time = start_time + duration
+4. Initialize: empty boards, both snakes alive, scores 0, pools 0
+5. Increment config.round_id
+6. Auto-delegate to ER (optional - can be manual)
 
 ---
 
@@ -105,15 +107,23 @@ Round states: `Active` → `InProgress` → `Settled`
 
 ---
 
-## Round Status Flow
+## Full ER Automation Flow
 
-```
-Active (betting open)
-    ↓ close_betting()
-InProgress (game playing on ER)
-    ↓ settle_and_undelegate()
-Settled (winner determined)
-```
+**Setup (once):**
+1. Admin: `initialize(fund_amount)` → creates Config + House
+2. Admin: `delegate_admin(agent)` → delegates to crank/agent
+
+**Each round (agent runs on ER):**
+1. Agent: `create_round(id, duration)` → new round, status = Active
+2. Users: `place_bet(round_id, choice, amount)` → bet on ER (fast!)
+3. Agent: `close_betting(round_id)` → status = InProgress
+4. Agent: `execute_move(round_id)` × N → game plays at 100ms
+5. Agent: `settle_and_undelegate(round_id)` → status = Settled, back to L1
+6. Users: `claim_winnings(round_id)` → collect 2x
+7. Agent: `sweep_vault(round_id)` → if draw
+8. Repeat from step 1
+
+**Key:** After delegate_admin, agent signs everything. No user/admin signatures needed per action.
 
 ---
 

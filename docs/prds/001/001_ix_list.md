@@ -8,10 +8,11 @@ Single source of truth for Solana/Anchor program design.
 
 | Name | Params | Accounts | Logic |
 |------|--------|----------|-------|
-| `initialize` | `admin: Pubkey` | Config (new) | Initialize program with admin authority |
-| `create_round` | `round_id: u64`, `start_time: i64` | Config, Round (new) | Create new round, increment round_id |
+| `initialize` | `fund_amount: u64` | Config (new), House (new) | Initialize program + fund house vault (admin) |
+| `delegate_admin` | - | Config | Admin delegates authority to agent (run once on L1) |
+| `create_round` | `round_id: u64`, `duration: i64` | Config, Round (new) | Create new round (admin OR agent) |
 | `delegate_round` | `round_id: u64` | Config, Round | Delegate round to Execution Runtime |
-| `place_bet` | `round_id: u64`, `choice: AIChoice`, `amount: u64` | Config, Round, Bet (new), User, Vault | Place bet on Alpha or Beta; validate amount 0.01-1 SOL, round Active |
+| `place_bet` | `round_id: u64`, `choice: AIChoice`, `amount: u64` | Config, Round, Bet (new), User, Vault | Place bet on ER (fast!); validate amount 0.01-1 SOL, round Active |
 | `close_betting` | `round_id: u64` | Config, Round | Close betting window, transition to InProgress |
 | `execute_move` | `round_id: u64` | Config, Round | Execute one AI move (called by ER crank); validate round InProgress |
 | `settle_and_undelegate` | `round_id: u64` | Config, Round | Settle round (determine winner), undelegate from ER |
@@ -25,8 +26,10 @@ Single source of truth for Solana/Anchor program design.
 | Account | Seeds | Description |
 |---------|-------|-------------|
 | `Config` | `["config"]` | Global program config: admin pubkey, current round_id, vault bump |
+| `House` | `["house"]` | SOL vault for payouts, funded by admin |
 | `Round` | `["round", round_id]` | Round state: status, winner, scores, alive flags, move_count, pools, timestamps |
 | `Bet` | `["bet", round_id, user]` | Per-user per-round bet: choice, amount, claimed flag |
+| `Vault` | `["vault", round_id]` | Holds user SOL per round, never delegated |
 
 ---
 
@@ -53,10 +56,12 @@ Draw // When both AIs die same move
 ### Config
 ```rust
 pub struct Config {
-    pub admin: Pubkey,           // Admin authority
+    pub admin: Pubkey,           // Original admin (can reclaim if needed)
+    pub agent: Option<Pubkey>,   // Delegated agent (crank/automation)
     pub round_id: u64,           // Current/next round ID
+    pub house_bump: u8,          // PDA bump for house
     pub vault_bump: u8,          // PDA bump for vault
-    pub house_fee_bps: u16,     // House fee in basis points (default: 0)
+    pub house_fee_bps: u16,      // House fee in basis points (default: 0)
 }
 ```
 
@@ -67,9 +72,11 @@ pub struct Round {
     pub status: RoundStatus,
     pub winner: Option<AIChoice>,
     
-    // AI State
-    pub alpha_board: Vec<Vec<u8>>,  // 2D board state
-    pub beta_board: Vec<Vec<u8>>,
+    // AI State - flat arrays for size efficiency (20x20 = 400 bytes)
+    pub alpha_board: [u8; 400],  // Flat 1D array, index = y * 20 + x
+    pub beta_board: [u8; 400],
+    pub alpha_seed: u64,         // Seed for deterministic "random" (food spawn, etc)
+    pub beta_seed: u64,
     pub alpha_score: u32,
     pub beta_score: u32,
     pub alpha_alive: bool,
@@ -100,6 +107,23 @@ pub struct Bet {
 }
 ```
 
+### House
+```rust
+pub struct House {
+    pub bump: u8,             // PDA bump
+    // Balance stored in lamports (PDA holds SOL)
+}
+```
+
+### Vault
+```rust
+pub struct Vault {
+    pub round_id: u64,
+    pub bump: u8,
+    // Balance stored in lamports
+}
+```
+
 ---
 
 ## Technical Constraints
@@ -107,8 +131,10 @@ pub struct Bet {
 - **Anchor Version:** 0.32.1
 - **Max Account Size:** 10KB per account
 - **Determinism:** On-chain AI must be fully deterministic; no `Clock` in move logic
+- **Determinism Rule:** All AI decisions based ONLY on board state + seed. No external calls.
 - **Math:** All values in u64 (lamports, scores); no floats
 - **Ticks:** 100ms ER cadence; `execute_move` must be lean
+- **Account Size:** Round ≈ 850 bytes (400 + 400 boards + fields), well under 10KB
 
 ---
 

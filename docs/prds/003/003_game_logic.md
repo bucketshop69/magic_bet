@@ -81,8 +81,8 @@ Each `execute_move` tick:
 |----------|-----------|
 | 1st | Survival: alive wins over dead |
 | 2nd | Score: higher food count wins |
-| 3rd | Moves: fewer moves wins (survived longer) |
-| Draw | Both die same move → no winner, bets returned |
+| 3rd | Moves: FEWER moves wins (died earlier = lost, survived longer = win) |
+| **Tie** | If ALL equal (both die same move, same score, same moves) → **DRAW**, no payouts |
 
 ---
 

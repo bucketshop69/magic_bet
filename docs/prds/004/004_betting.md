@@ -8,6 +8,12 @@ House model: players bet against the house, not each other. 2x payout on win.
 
 ## place_bet Instruction
 
+**Mutability Rules:**
+- If Bet PDA doesn't exist → create new
+- If Bet PDA exists → ADD amount to existing (top-up)
+- Choice CANNOT be changed once placed
+- If user tries to change choice → REJECT
+
 | Field | Value |
 |-------|-------|
 | `round_id` | u64 |
@@ -16,10 +22,12 @@ House model: players bet against the house, not each other. 2x payout on win.
 
 **Accounts:**
 
-- `round` — must be Active status
+- `round` — must be Active status (L1)
 - `bet` — PDA ["bet", round_id, user], create if not exist
 - `user` — signer
-- `vault` — PDA ["vault", round_id]
+- `vault` — PDA ["vault", round_id] (L1, never delegated)
+
+**Layering:** `place_bet` runs on L1 only. Vault stays on L1. Only Round PDA delegates to ER.
 
 **Logic:**
 
@@ -58,7 +66,13 @@ House model: players bet against the house, not each other. 2x payout on win.
 
 | Case | Handling |
 |------|----------|
+| House balance < 2x total_payout | REJECT: "House insufficient funds" |
 | Round not Active | REJECT: "Betting closed" |
+
+**House Solvency Check:**
+- On place_bet: Calculate potential payout = (user's existing bet + new bet) × 2
+- Validate: house.balance >= (alpha_pool + beta_pool) × 2 + potential_payout
+- This ensures house can pay ALL winners even if everyone bets same side
 | Amount < 0.01 SOL | REJECT: "Min bet 0.01 SOL" |
 | Amount > 1 SOL | REJECT: "Max bet 1 SOL" |
 | Double claim | REJECT: "Already claimed" |

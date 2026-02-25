@@ -73,6 +73,9 @@ House model: players bet against the house, not each other. 2x payout on win.
 - On place_bet: Calculate potential payout = (user's existing bet + new bet) × 2
 - Validate: house.balance >= (alpha_pool + beta_pool) × 2 + potential_payout
 - This ensures house can pay ALL winners even if everyone bets same side
+
+| Case | Handling |
+|------|----------|
 | Amount < 0.01 SOL | REJECT: "Min bet 0.01 SOL" |
 | Amount > 1 SOL | REJECT: "Max bet 1 SOL" |
 | Double claim | REJECT: "Already claimed" |
@@ -113,3 +116,6 @@ beta_pool: u64,   // total lamports bet on Beta
 - Clear instruction specs
 - Proper validation order
 - Draw handled (no payouts)
+
+
+> Codex note (2026-02-25): Implemented and validated on devnet (`anchor test`: 4 passing). `place_bet` is finalized as L1-only with top-up + immutable choice.

@@ -25,7 +25,7 @@ Round states: `Active` → `InProgress` → `Settled`
 3. Set start_time = Clock::now(), end_time = start_time + duration
 4. Initialize: empty boards, both snakes alive, scores 0, pools 0
 5. Increment config.round_id
-6. Auto-delegate to ER (optional - can be manual)
+6. Keep round on L1 while betting is open
 
 ---
 
@@ -41,7 +41,7 @@ Round states: `Active` → `InProgress` → `Settled`
 
 **Logic:**
 
-1. Validate round.status == Active (or InProgress)
+1. Validate round.status == InProgress
 2. Delegate round PDA to ER validator
 3. This enables fast (100ms) execute_move calls
 
@@ -113,17 +113,18 @@ Round states: `Active` → `InProgress` → `Settled`
 1. Admin: `initialize(fund_amount)` → creates Config + House
 2. Admin: `delegate_admin(agent)` → delegates to crank/agent
 
-**Each round (agent runs on ER):**
+**Each round (hybrid L1 + ER):**
 1. Agent: `create_round(id, duration)` → new round, status = Active
-2. Users: `place_bet(round_id, choice, amount)` → bet on ER (fast!)
+2. Users: `place_bet(round_id, choice, amount)` → bet on L1
 3. Agent: `close_betting(round_id)` → status = InProgress
-4. Agent: `execute_move(round_id)` × N → game plays at 100ms
-5. Agent: `settle_and_undelegate(round_id)` → status = Settled, back to L1
-6. Users: `claim_winnings(round_id)` → collect 2x
-7. Agent: `sweep_vault(round_id)` → if draw
-8. Repeat from step 1
+4. Agent: `delegate_round(round_id)` → move Round execution to ER
+5. Agent: `execute_move(round_id)` × N → game plays at 100ms
+6. Agent: `settle_and_undelegate(round_id)` → status = Settled, back to L1
+7. Users: `claim_winnings(round_id)` → collect 2x
+8. Agent: `sweep_vault(round_id)` → close round vault
+9. Repeat from step 1
 
-**Key:** After delegate_admin, agent signs everything. No user/admin signatures needed per action.
+**Key:** Agent signs lifecycle/crank instructions; users still sign their own `place_bet` and `claim_winnings`.
 
 ---
 
@@ -147,3 +148,6 @@ Round states: `Active` → `InProgress` → `Settled`
 - Clear state machine
 - Proper validation at each step
 - ER integration covered
+
+
+> Codex note (2026-02-25): Implemented and validated on devnet (`anchor test`: 4 passing). Final lifecycle is L1 betting window, then ER game execution after `close_betting` + `delegate_round`.

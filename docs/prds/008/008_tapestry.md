@@ -92,3 +92,6 @@ Tapestry reads from chain via indexer.
 - Clear separation: on-chain vs off-chain
 - Indexer approach is correct
 - Phase 1 scope reasonable
+
+
+> Codex note (2026-02-25): On-chain game/betting flows are now validated on devnet (`anchor test`: 4 passing). Off-chain Tapestry/indexer implementation from this PRD remains pending.

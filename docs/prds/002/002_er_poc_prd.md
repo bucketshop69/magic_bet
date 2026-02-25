@@ -34,7 +34,7 @@ An ER is a temporary sidechain that runs on Solana validators. You **delegate** 
 |--------|----------|--------|
 | US | devnet-us.magicblock.app | `MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd` |
 | EU | devnet-eu.magicblock.app | `MEUGGrYPxKk17hCr7wpT6s8dtNokZj5U2L57vjYMS8e` |
-| Asia | devnet-as.magicblock.app | `MAS1Dt9qreoRMQ14YUHg8UTZMMzDdKhmkZMECCzk57` |
+| Asia | devnet-as.magicblock.app | `MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57` |
 | TEE | tee.magicblock.app | `FnE6VJT5QNZdedZZnCoLsARgBwoE6DeJNjBs2H1gySXA` |
 
 ## Required Dependencies
@@ -160,3 +160,6 @@ pub struct IncrementAndCommit<'info> {
 
 - POC should take 1-2 hours
 - Focus: understand the pattern, not build the game yet
+
+
+> Codex note (2026-02-25): ER integration pattern is validated on devnet (`anchor test`: 4 passing), and the final game flow adopts L1 value movement + ER data-only execution.

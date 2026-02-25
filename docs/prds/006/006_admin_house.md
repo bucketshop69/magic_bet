@@ -38,7 +38,7 @@
 2. Set config.agent = agent pubkey
 3. After this, agent can call all admin instructions
 
-**Usage:** Run once after initialize. Agent then runs everything on ER.
+**Usage:** Run once after initialize. Agent then runs lifecycle/crank instructions; users still sign `place_bet` and `claim_winnings` on L1.
 
 ---
 
@@ -152,3 +152,6 @@ struct House {
 **Added after CEO review:**
 - `fund_house` instruction for admin to add SOL
 - Balance check on place_bet
+
+
+> Codex note (2026-02-25): Implemented and validated on devnet (`anchor test`: 4 passing). Admin/agent authority and house flows are active in `programs/magic_bet/src/lib.rs`.

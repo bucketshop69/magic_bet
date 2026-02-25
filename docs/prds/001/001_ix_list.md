@@ -11,9 +11,9 @@ Single source of truth for Solana/Anchor program design.
 | `initialize` | `fund_amount: u64` | Config (new), House (new) | Initialize program + fund house vault (admin) |
 | `delegate_admin` | - | Config | Admin delegates authority to agent (run once on L1) |
 | `create_round` | `round_id: u64`, `duration: i64` | Config, Round (new) | Create new round (admin OR agent) |
-| `delegate_round` | `round_id: u64` | Config, Round | Delegate round to Execution Runtime |
-| `place_bet` | `round_id: u64`, `choice: AIChoice`, `amount: u64` | Config, Round, Bet (new), User, Vault | Place bet on ER (fast!); validate amount 0.01-1 SOL, round Active |
 | `close_betting` | `round_id: u64` | Config, Round | Close betting window, transition to InProgress |
+| `delegate_round` | `round_id: u64` | Config, Round | Delegate round to Execution Runtime (after close_betting) |
+| `place_bet` | `round_id: u64`, `choice: AIChoice`, `amount: u64` | Config, Round, Bet (new), User, Vault | Place bet on L1; create/top-up bet, transfer user SOL to vault |
 | `execute_move` | `round_id: u64` | Config, Round | Execute one AI move (called by ER crank); validate round InProgress |
 | `settle_and_undelegate` | `round_id: u64` | Config, Round | Settle round (determine winner), undelegate from ER |
 | `claim_winnings` | `round_id: u64` | Config, Round, Bet, User, Vault | Claim 2x payout if bet won; mark claimed |
@@ -25,11 +25,11 @@ Single source of truth for Solana/Anchor program design.
 
 | Account | Seeds | Description |
 |---------|-------|-------------|
-| `Config` | `["config"]` | Global program config: admin pubkey, current round_id, vault bump |
-| `House` | `["house"]` | SOL vault for payouts, funded by admin |
-| `Round` | `["round", round_id]` | Round state: status, winner, scores, alive flags, move_count, pools, timestamps |
-| `Bet` | `["bet", round_id, user]` | Per-user per-round bet: choice, amount, claimed flag |
-| `Vault` | `["vault", round_id]` | Holds user SOL per round, never delegated |
+| `Config` | `["config_v2"]` | Global program config: admin pubkey, current round_id, vault bump |
+| `House` | `["house_v2"]` | SOL vault for payouts, funded by admin |
+| `Round` | `["round_v2", round_id]` | Round state: status, winner, scores, alive flags, move_count, pools, timestamps |
+| `Bet` | `["bet_v2", round_id, user]` | Per-user per-round bet: choice, amount, claimed flag |
+| `Vault` | `["vault_v2", round_id]` | Holds user SOL per round, never delegated |
 
 ---
 
@@ -91,8 +91,6 @@ pub struct Round {
     pub start_time: i64,
     pub end_time: Option<i64>,
     
-    // ER State
-    pub er_delegation: Option<Pubkey>,  // ER round PDA
 }
 ```
 
@@ -144,7 +142,7 @@ pub struct Vault {
 2. **Claim for lost bet** → Reject: validate winner matches choice
 3. **Claim twice** → Reject: `claimed` flag checked
 4. **Bet zero/negative** → Reject: validate amount > 0
-5. **Bet exceeds house balance** → Reject: check vault balance >= 2x payout
+5. **Bet exceeds house balance** → Reject: check house solvency before accepting bet
 6. **Both AIs die same move** → Winner: higher score wins; if tied, fewer moves wins
 7. **No bets on round** → Allow: round plays, house keeps nothing
 8. **All-in on one side** → Handle: other side has 0 pool, game still runs
@@ -187,3 +185,6 @@ pub struct Vault {
 | Basic profile | Tapestry integration |
 | Simple leaderboard | Weekly/daily filters |
 | Blink GET | Blink POST |
+
+
+> Codex note (2026-02-25): Implemented and validated on devnet (`anchor test`: 4 passing). Final flow: `place_bet` + `close_betting` on L1, then `delegate_round` and ER game loop/settle.

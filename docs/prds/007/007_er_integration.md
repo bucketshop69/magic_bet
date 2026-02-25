@@ -12,7 +12,7 @@ This PRD specifies how MagicBlock Ephemeral Rollups integrate with the game exec
 | Region | Endpoint | Pubkey |
 |--------|----------|--------|
 | US | devnet-us.magicblock.app | `MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd` |
-| Asia | devnet-as.magicblock.app | `MAS1Dt9qreoRMQ14YUHg8UTZMMzDdKhmkZMECCzk57` |
+| Asia | devnet-as.magicblock.app | `MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57` |
 
 **Mainnet:** TBD (use US for hackathon)
 
@@ -24,20 +24,16 @@ After `delegate_round()`, the Round account is owned by ER. Any `execute_move` c
 
 1. **Target ER RPC** — Not L1 RPC
 2. **Sign with ER provider** — Same wallet, different connection
-3. **Include magic accounts** — Anchor auto-injects `magic_context` and `magic_program`
+3. **Use delegated Round account only** — No account creation or lamport movement on ER path
 
 ```typescript
 // Crank calls execute_move on ER
 const erProvider = new AnchorProvider(erConnection, wallet);
-const tx = await program.methods.executeMove().accounts({
+await program.methods.executeMove(roundId).accounts({
   round: roundPDA,
-}).transaction();
-
-tx.feePayer = erProvider.wallet.publicKey;
-tx.recentBlockhash = (await erProvider.connection.getLatestBlockhash()).blockhash;
-
-const signed = await erProvider.wallet.signTransaction(tx);
-await erProvider.sendAndConfirm(signed);
+  config: configPDA,
+  signer: crankPubkey,
+}).rpc();
 ```
 
 ---
@@ -58,8 +54,8 @@ await erProvider.sendAndConfirm(signed);
 The crank must:
 
 1. **Maintain two providers:**
-   - L1 provider (for settle, create_round, close_betting)
-   - ER provider (for execute_move calls)
+   - L1 provider (for create_round, place_bet, close_betting, claim/sweep)
+   - ER provider (for delegate-aware `execute_move` and `settle_and_undelegate`)
 
 2. **Track delegation state:**
    - Before execute_move → verify round is delegated
@@ -93,13 +89,14 @@ use ephemeral_rollups_sdk::ephem::{commit_accounts, commit_and_undelegate_accoun
 Admin (L1): initialize() → fund house
 Admin (L1): delegate_admin(agent) → agent now authorized
 
-Agent (ER):
-  create_round() → Active
-  place_bet() → users bet (ER fast!)
-  close_betting() → InProgress
-  execute_move() × 500 → game plays at 100ms ticks
-  settle_and_undelegate() → Settled, back to L1
-  sweep_vault() → if draw
+Hybrid flow:
+  create_round() on L1 → Active
+  users place_bet() on L1
+  close_betting() on L1 → InProgress
+  delegate_round() on L1
+  execute_move() × N on ER
+  settle_and_undelegate() on ER → Settled, back to L1
+  claim_winnings()/sweep_vault() on L1
   → repeat
 ```
 
@@ -123,3 +120,6 @@ Agent (ER):
 - Clear ER vs L1 distinction
 - Crank requirements specified
 - Error handling covered
+
+
+> Codex note (2026-02-25): Implemented and validated on devnet (`anchor test`: 4 passing). Final ER split is data-only game execution on ER, with betting/payout SOL movement on L1.

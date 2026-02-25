@@ -154,3 +154,6 @@ struct Round {
 - Consider adding board initialization in create_round
 
 Approved for implementation.
+
+
+> Codex note (2026-02-25): Game logic is implemented and validated on devnet (`anchor test`: 4 passing), including deterministic move loop and winner resolution.

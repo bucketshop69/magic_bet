@@ -542,8 +542,6 @@ pub struct ClaimWinnings<'info> {
     pub bet: Account<'info, Bet>,
     #[account(mut, seeds = [HOUSE_SEED], bump = house.bump)]
     pub house: Account<'info, House>,
-    #[account(seeds = [VAULT_SEED, &round_id.to_le_bytes()], bump = vault.bump)]
-    pub vault: Account<'info, Vault>,
     pub system_program: Program<'info, System>,
 }
 

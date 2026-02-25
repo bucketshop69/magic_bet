@@ -18,6 +18,7 @@ const EnvSchema = z.object({
   WS_PATH: z.string().default("/ws"),
   WS_MAX_SUBSCRIPTIONS_PER_SOCKET: z.coerce.number().int().positive().default(5),
   WS_MAX_CONNECTIONS_PER_IP_PER_MIN: z.coerce.number().int().positive().default(60),
+  CORS_ORIGIN: z.string().default("http://localhost:5173"),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),

@@ -1,0 +1,76 @@
+.board-card {
+  border: 1px solid #c9d7d2;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #f7fbfa 0%, #eef6f4 100%);
+  padding: 12px;
+}
+
+.board-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.board-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.pill {
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pill.alive {
+  color: #1f7a46;
+  background: #d4f4df;
+}
+
+.pill.dead {
+  color: #9f1f1f;
+  background: #f8d5d5;
+}
+
+.score {
+  margin-left: auto;
+  font-size: 12px;
+  color: #335650;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(20, minmax(0, 1fr));
+  gap: 2px;
+  background: #d7e6e1;
+  border-radius: 10px;
+  padding: 4px;
+}
+
+.cell {
+  width: 100%;
+  aspect-ratio: 1;
+  background: #f8fcfb;
+  border-radius: 2px;
+}
+
+.cell.food {
+  background: #ff9a3d;
+}
+
+.cell.snake.s3,
+.cell.snake.s4 {
+  background: #5f8ef5;
+}
+
+.cell.snake.s5,
+.cell.snake.s6 {
+  background: #3f74e2;
+}
+
+.cell.snake.s7,
+.cell.snake.s8 {
+  background: #204fb7;
+}

@@ -37,6 +37,7 @@ async function main() {
     orchestrator,
     env.PORT,
     log,
+    env.CORS_ORIGIN,
     () => gateway.getStatus()
   );
   gateway.attach(healthServer);

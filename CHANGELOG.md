@@ -21,6 +21,14 @@ All notable changes to this project are documented in this file.
 - Added WS smoke test script:
   - `services/crank/scripts/ws-smoke.js`
   - root script: `yarn crank:ws-smoke`
+- Added Pass A web client under `apps/web`:
+  - Phantom wallet connect/disconnect
+  - live round streaming from crank websocket
+  - dual 20x20 snake board renderer
+  - L1 `place_bet` and `claim_winnings` actions
+  - runtime status/event log panel
+- Added root web scripts in `package.json`:
+  - `web:install`, `web:dev`, `web:build`, `web:preview`
 
 ### Changed
 
@@ -36,6 +44,8 @@ All notable changes to this project are documented in this file.
 - Crank now supports keypair path loading via `ANCHOR_WALLET` (default `~/.config/solana/id.json`) without relying on `NodeWallet.local()`.
 - Crank observability improved with per-round timing metrics (`bettingWindowMs`, `gameDurationMs`, `settleDurationMs`, `totalRoundMs`).
 - Crank health `/status` now returns orchestrator + websocket runtime stats in BigInt-safe JSON format.
+- Crank HTTP API now supports configurable CORS via `CORS_ORIGIN` (default `http://localhost:5173`) for browser-based web client access.
+- Claim UI now supports selecting and claiming older unclaimed winning rounds (not only the latest settled round).
 
 ### Fixed
 
@@ -46,6 +56,10 @@ All notable changes to this project are documented in this file.
 - Fixed startup guard compatibility where ER connection does not expose `getIdentity()` by using RPC fallback.
 - Implemented idempotent cleanup behavior to avoid duplicate `close_bet` processing/log churn per round.
 - Fixed `/status` serialization crash caused by raw `BigInt` values.
+- Fixed websocket reconnect/topic-race issue in web client causing round stream bouncing after settlement.
+- Fixed browser runtime error `Buffer is not defined` in web client by adding browser-safe polyfills.
+- Fixed frontend bet amount parsing/validation with explicit `0.01` to `1` SOL bounds and clearer errors.
+- Fixed `claim_winnings` late-claim failure after `sweep_vault` by removing unnecessary `vault` account requirement from `ClaimWinnings`.
 
 ### Docs
 

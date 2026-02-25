@@ -1,5 +1,6 @@
 import { PublicKey } from "@solana/web3.js";
-import { delegateRound } from "../../chain/methods";
+import { delegateRound, fetchRound } from "../../chain/methods";
+import { serializeRoundState } from "../../ws/serializers";
 
 export async function runDelegateRound(ctx: any) {
   const roundId = ctx.store.get().currentRoundId;
@@ -13,4 +14,7 @@ export async function runDelegateRound(ctx: any) {
   );
   ctx.store.setLastTx(sig);
   ctx.log.info({ roundId: roundId.toString(), sig }, "delegate_round complete");
+
+  const round = await fetchRound(ctx.l1.program, roundId);
+  ctx.gateway?.publishRoundState(serializeRoundState(roundId, round));
 }

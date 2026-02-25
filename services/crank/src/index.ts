@@ -6,6 +6,7 @@ import { createErClient } from "./chain/erClient";
 import { RoundOrchestrator } from "./core/orchestrator";
 import { createHealthServer } from "./api/health";
 import { validateStartup } from "./core/startupGuards";
+import { RoundWsGateway } from "./ws/server";
 
 async function main() {
   const env = loadEnv();
@@ -17,9 +18,28 @@ async function main() {
   await validateStartup({ env, log, l1, er });
 
   const store = new RuntimeStore();
-  const orchestrator = new RoundOrchestrator({ env, log, store, l1, er });
+  const gateway = new RoundWsGateway({
+    path: env.WS_PATH,
+    maxSubscriptionsPerSocket: env.WS_MAX_SUBSCRIPTIONS_PER_SOCKET,
+    maxConnectionsPerIpPerMin: env.WS_MAX_CONNECTIONS_PER_IP_PER_MIN,
+    log,
+  });
+  const orchestrator = new RoundOrchestrator({
+    env,
+    log,
+    store,
+    l1,
+    er,
+    gateway,
+  });
 
-  createHealthServer(orchestrator, env.PORT, log);
+  const healthServer = createHealthServer(
+    orchestrator,
+    env.PORT,
+    log,
+    () => gateway.getStatus()
+  );
+  gateway.attach(healthServer);
 
   process.on("SIGINT", () => {
     log.info("received SIGINT, stopping orchestrator");

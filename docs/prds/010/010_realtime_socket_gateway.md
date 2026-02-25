@@ -1,5 +1,7 @@
 # 010 — Realtime Socket Gateway (Crank -> App Bridge)
 
+> Status (2026-02-25): In progress. Implemented inside `services/crank/src/ws/*` as single-process gateway with subscribe/snapshot/round-state/transition broadcasts.
+
 ## Overview
 
 This PRD defines the realtime bridge that streams round/game state to clients.

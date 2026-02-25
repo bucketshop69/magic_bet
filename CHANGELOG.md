@@ -14,6 +14,13 @@ All notable changes to this project are documented in this file.
 - Added crank service scaffold under `services/crank`:
   - lifecycle orchestrator, phase handlers, chain clients, health API, retry/logger infra
   - PM2 ecosystem config and standalone README/env templates
+- Added embedded WebSocket gateway in crank (`services/crank/src/ws/*`) with:
+  - topic subscriptions (`round:<id>`)
+  - `round_state_v1`, `round_transition_v1`, and `snapshot_v1` events
+  - per-IP connection rate limiting and per-socket subscription limits
+- Added WS smoke test script:
+  - `services/crank/scripts/ws-smoke.js`
+  - root script: `yarn crank:ws-smoke`
 
 ### Changed
 
@@ -28,6 +35,7 @@ All notable changes to this project are documented in this file.
 - Added root scripts for crank workflows in `package.json` (`crank:install`, `crank:build`, `crank:dev`, `crank:start`).
 - Crank now supports keypair path loading via `ANCHOR_WALLET` (default `~/.config/solana/id.json`) without relying on `NodeWallet.local()`.
 - Crank observability improved with per-round timing metrics (`bettingWindowMs`, `gameDurationMs`, `settleDurationMs`, `totalRoundMs`).
+- Crank health `/status` now returns orchestrator + websocket runtime stats in BigInt-safe JSON format.
 
 ### Fixed
 
@@ -37,6 +45,7 @@ All notable changes to this project are documented in this file.
 - Fixed crank startup failures caused by missing `ANCHOR_WALLET` env in runtime.
 - Fixed startup guard compatibility where ER connection does not expose `getIdentity()` by using RPC fallback.
 - Implemented idempotent cleanup behavior to avoid duplicate `close_bet` processing/log churn per round.
+- Fixed `/status` serialization crash caused by raw `BigInt` values.
 
 ### Docs
 
@@ -53,6 +62,7 @@ All notable changes to this project are documented in this file.
   - startup hard guards
   - canonical lifecycle
   - cleanup policy and timing logs
+  - websocket endpoint and smoke-test usage
 
 ### Validation
 

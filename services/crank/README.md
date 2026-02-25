@@ -30,6 +30,28 @@ Health endpoints:
 - `GET /healthz`
 - `GET /status`
 
+WebSocket endpoint:
+
+- `ws://<host>:<PORT><WS_PATH>` (default `ws://localhost:8787/ws`)
+- Client message: `{"type":"subscribe","topic":"round:<round_id>"}`
+- Server events:
+  - `round_state_v1`
+  - `round_transition_v1`
+  - `snapshot_v1` (sent on subscribe/reconnect)
+
+Quick smoke test:
+
+```bash
+yarn crank:ws-smoke
+```
+
+Optional args:
+
+```bash
+yarn --cwd services/crank ws:smoke -- --round-id 42
+yarn --cwd services/crank ws:smoke -- --status-url http://127.0.0.1:8787/status --ws-url ws://127.0.0.1:8787/ws
+```
+
 ## Lifecycle
 
 Canonical round flow in the crank:

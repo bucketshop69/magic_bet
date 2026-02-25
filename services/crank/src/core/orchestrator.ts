@@ -25,7 +25,7 @@ export class RoundOrchestrator {
       },
       "recovery snapshot loaded"
     );
-    this.ctx.store.setPhase("READY");
+    this.transitionTo("READY");
   }
 
   async start() {
@@ -55,7 +55,7 @@ export class RoundOrchestrator {
 
     switch (state.phase) {
       case "READY": {
-        this.ctx.store.setPhase("CREATE_ROUND");
+        this.transitionTo("CREATE_ROUND");
         return;
       }
       case "CREATE_ROUND": {
@@ -68,7 +68,7 @@ export class RoundOrchestrator {
         const deadline =
           Date.now() + this.ctx.env.ROUND_DURATION_SECONDS * 1000;
         this.ctx.store.setBettingDeadline(deadline);
-        this.ctx.store.setPhase("BETTING_OPEN");
+        this.transitionTo("BETTING_OPEN");
         return;
       }
       case "BETTING_OPEN": {
@@ -77,7 +77,7 @@ export class RoundOrchestrator {
           await sleep(500);
           return;
         }
-        this.ctx.store.setPhase("CLOSE_BETTING");
+        this.transitionTo("CLOSE_BETTING");
         return;
       }
       case "CLOSE_BETTING": {
@@ -87,7 +87,7 @@ export class RoundOrchestrator {
           maxDelayMs: 5000,
         });
         this.ctx.store.markBettingClosed();
-        this.ctx.store.setPhase("DELEGATE_ROUND");
+        this.transitionTo("DELEGATE_ROUND");
         return;
       }
       case "DELEGATE_ROUND": {
@@ -96,7 +96,7 @@ export class RoundOrchestrator {
           baseDelayMs: 500,
           maxDelayMs: 5000,
         });
-        this.ctx.store.setPhase("GAME_LOOP");
+        this.transitionTo("GAME_LOOP");
         return;
       }
       case "GAME_LOOP": {
@@ -107,7 +107,7 @@ export class RoundOrchestrator {
           maxDelayMs: 2000,
         });
         this.ctx.store.markGameEnded();
-        this.ctx.store.setPhase("SETTLE");
+        this.transitionTo("SETTLE");
         return;
       }
       case "SETTLE": {
@@ -117,7 +117,7 @@ export class RoundOrchestrator {
           maxDelayMs: 5000,
         });
         this.ctx.store.markSettled();
-        this.ctx.store.setPhase("CLEANUP");
+        this.transitionTo("CLEANUP");
         return;
       }
       case "CLEANUP": {
@@ -128,15 +128,30 @@ export class RoundOrchestrator {
         });
         this.ctx.store.setBettingDeadline(null);
         this.ctx.store.resetRoundMarkers();
-        this.ctx.store.setPhase("READY");
+        this.transitionTo("READY");
         return;
       }
       default:
-        this.ctx.store.setPhase("READY");
+        this.transitionTo("READY");
     }
   }
 
   getStatus() {
     return this.ctx.store.get();
+  }
+
+  private transitionTo(next: string) {
+    const previous = this.ctx.store.get();
+    if (previous.phase === next) return;
+    this.ctx.store.setPhase(next);
+    const roundId = this.ctx.store.get().currentRoundId;
+    if (!roundId || !this.ctx.gateway) return;
+    this.ctx.gateway.publishRoundTransition({
+      type: "round_transition_v1",
+      ts: Date.now(),
+      roundId: roundId.toString(),
+      from: previous.phase,
+      to: next,
+    });
   }
 }

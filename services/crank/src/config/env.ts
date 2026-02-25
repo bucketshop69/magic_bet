@@ -15,6 +15,9 @@ const EnvSchema = z.object({
   MAX_MOVE_RETRIES: z.coerce.number().int().positive().default(5),
   MAX_STEP_RETRIES: z.coerce.number().int().positive().default(5),
   STUCK_ROUND_TIMEOUT_MS: z.coerce.number().int().positive().default(600000),
+  WS_PATH: z.string().default("/ws"),
+  WS_MAX_SUBSCRIPTIONS_PER_SOCKET: z.coerce.number().int().positive().default(5),
+  WS_MAX_CONNECTIONS_PER_IP_PER_MIN: z.coerce.number().int().positive().default(60),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),

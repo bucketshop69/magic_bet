@@ -1,4 +1,5 @@
-import { closeBetting } from "../../chain/methods";
+import { closeBetting, fetchRound } from "../../chain/methods";
+import { serializeRoundState } from "../../ws/serializers";
 
 export async function runCloseBetting(ctx: any) {
   const roundId = ctx.store.get().currentRoundId;
@@ -10,4 +11,7 @@ export async function runCloseBetting(ctx: any) {
   );
   ctx.store.setLastTx(sig);
   ctx.log.info({ roundId: roundId.toString(), sig }, "close_betting complete");
+
+  const round = await fetchRound(ctx.l1.program, roundId);
+  ctx.gateway?.publishRoundState(serializeRoundState(roundId, round));
 }

@@ -6,7 +6,8 @@
     "crank:install": "yarn --cwd services/crank install",
     "crank:dev": "yarn --cwd services/crank dev",
     "crank:build": "yarn --cwd services/crank build",
-    "crank:start": "yarn --cwd services/crank start"
+    "crank:start": "yarn --cwd services/crank start",
+    "crank:ws-smoke": "yarn --cwd services/crank ws:smoke"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.32.1",

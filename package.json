@@ -2,7 +2,11 @@
   "license": "ISC",
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
-    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
+    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
+    "crank:install": "yarn --cwd services/crank install",
+    "crank:dev": "yarn --cwd services/crank dev",
+    "crank:build": "yarn --cwd services/crank build",
+    "crank:start": "yarn --cwd services/crank start"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.32.1",

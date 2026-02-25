@@ -31,14 +31,14 @@ MagicBlock's ER fixes speed and cost. Tapestry fixes social. Magic Bet is the fi
 | Layer | Technology |
 |---|---|
 | Solana Program | Anchor 0.32.1 |
-| Ephemeral Rollups | MagicBlock ER — delegate, place_bet, game moves, settle_and_undelegate |
-| AI Engine | On-chain Snake logic in Anchor program — fully transparent, public code |
+| Ephemeral Rollups | MagicBlock ER — delegate round, execute moves, settle_and_undelegate |
+| AI Engine | On-chain deterministic Snake engine (v1). External AI input planned as v2. |
 | Social Layer | Tapestry REST API — profiles, follows, leaderboard |
 | Blinks | Next.js API routes implementing Solana Actions spec |
 | Mobile App | React Native + Expo (iOS & Android) |
 | Wallet | Mobile Wallet Adapter (Phantom, Solflare) |
-| RPC | Magic Router devnet — auto-routes L1 vs ER |
-| Round Crank | Node.js admin script — auto manages round lifecycle + AI moves |
+| RPC | Solana Devnet (L1) + MagicBlock ER endpoint |
+| Round Crank | Node.js service — round lifecycle, game loop, websocket broadcast |
 
 ---
 
@@ -56,11 +56,12 @@ The tension between strategies is what makes betting interesting. Neither AI alw
 ### 4.2 Game Loop
 
 1. Round **OPENS** — New Snake board initialized on-chain. Betting window begins for X minutes.
-2. Players **BET** — Pick Alpha or Beta. SOL goes into vault PDA. Bet recorded in Ephemeral Rollup.
-3. Round **CLOSES** — Betting window ends. No new bets accepted. Game begins.
-4. Game **PLAYS** — Round crank sends AI move transactions to ER every 100ms. Board state updates in real-time. Game runs for X minutes or until one snake dies.
-5. Round **SETTLES** — Winner determined by survival + score. State committed back to L1.
-6. Winners **CLAIM** — 2x payout from house vault on L1.
+2. Players **BET** — Pick Alpha or Beta on L1. SOL goes into round vault PDA. Bet PDA created/updated on L1.
+3. Round **CLOSES** — Betting window ends. No new bets accepted. Round status becomes `InProgress`.
+4. Round **DELEGATES** — Round PDA is delegated to ER.
+5. Game **PLAYS** — Round crank calls `execute_move` on ER every ~100ms. Board state updates in real-time. Game runs until winner or limit.
+6. Round **SETTLES** — `settle_and_undelegate` on ER commits final round state back to L1.
+7. Winners **CLAIM** — 2x payout from house vault on L1. Admin/agent runs sweep/cleanup.
 
 ### 4.3 House Model
 
@@ -124,7 +125,7 @@ The main game screen — where 80% of time is spent.
 - Amount: X SOL
 - Potential payout: 2x = Y SOL
 - AI strategy summary — one line reminder of who you're backing
-- Confirm button → triggers `place_bet` tx on ER
+- Confirm button → triggers `place_bet` tx on L1
 - Transaction status — pending/confirmed/failed with spinner
 
 ### Screen 4: Round Result
@@ -187,25 +188,27 @@ The main game screen — where 80% of time is spent.
 
 | Account | Seeds | Description |
 |---|---|---|
-| Config PDA | `["config"]` | Stores admin pubkey. Created once at init. |
-| House PDA | `["house"]` | SOL vault for payouts. Funded by admin at init. |
-| Round PDA | `["round", round_id]` | Round state: board, scores, move count, status, winner. Delegated to ER during game. |
-| Bet PDA | `["bet", round_id, user]` | Per-user per-round record. AI choice (Alpha/Beta), amount, claimed. |
-| Vault PDA | `["vault", round_id]` | Holds user SOL per round. Never delegated — stays on L1. |
+| Config PDA | `["config_v2"]` | Stores admin/agent and global config. Created once at init. |
+| House PDA | `["house_v2"]` | SOL vault for payouts. Funded by admin at init. |
+| Round PDA | `["round_v2", round_id]` | Round state: board, scores, move count, status, winner. Delegated to ER during game phase. |
+| Bet PDA | `["bet_v2", round_id, user]` | Per-user per-round record. AI choice, amount, claimed. |
+| Vault PDA | `["vault_v2", round_id]` | Holds user SOL per round on L1. Not delegated. |
 
 ### 6.2 Round Account Fields
 
 | Field | Type | Description |
 |---|---|---|
 | `round_id` | u64 | Unique round identifier |
-| `alpha_score` | u64 | Alpha snake current score |
-| `beta_score` | u64 | Beta snake current score |
+| `alpha_score` | u32 | Alpha snake current score |
+| `beta_score` | u32 | Beta snake current score |
 | `alpha_alive` | bool | Alpha snake alive status |
 | `beta_alive` | bool | Beta snake alive status |
-| `move_count` | u64 | Total moves executed so far |
+| `move_count` | u32 | Total moves executed so far |
+| `alpha_board` | `[u8; 400]` | Alpha board cells (20x20 flattened) |
+| `beta_board` | `[u8; 400]` | Beta board cells (20x20 flattened) |
 | `alpha_pool` | u64 | Total SOL bet on Alpha |
 | `beta_pool` | u64 | Total SOL bet on Beta |
-| `winner` | AIChoice | Alpha / Beta / Draw |
+| `winner` | Option<AIChoice> | Alpha / Beta / Draw |
 | `status` | RoundStatus | Active / InProgress / Settled |
 | `start_time` | i64 | Unix timestamp of round start |
 | `duration` | i64 | Max game duration in seconds |
@@ -217,12 +220,14 @@ The main game screen — where 80% of time is spent.
 |---|---|---|
 | `initialize(fund_amount)` | L1 | Creates Config + funds House. Admin only. |
 | `create_round(round_id, duration)` | L1 | Creates Round PDA. Initializes board state. Status: Active. |
-| `delegate_round()` | L1 → ER | Delegates Round PDA to MagicBlock ER. |
-| `place_bet(round_id, amount, ai_choice)` | ER | Creates Bet PDA. Transfers SOL to Vault. Updates Round pools. |
-| `close_betting(round_id)` | L1 | Sets Round status: InProgress. Blocks new bets. Game begins. |
+| `place_bet(round_id, amount, ai_choice)` | L1 | Creates/updates Bet PDA. Transfers SOL to Vault. Updates Round pools. |
+| `close_betting(round_id)` | L1 | Sets Round status: InProgress. Blocks new bets. |
+| `delegate_round(round_id)` | L1 → ER | Delegates Round PDA to MagicBlock ER after betting closes. |
 | `execute_move(round_id)` | ER | Runs one move for both AIs. Updates board state. Checks win condition. |
 | `settle_and_undelegate(round_id)` | ER → L1 | Determines winner from final scores. Commits + undelegates Round to L1. |
 | `claim_winnings(round_id)` | L1 | Checks Bet won, not claimed. Sends 2x from House to user. |
+| `close_bet(round_id, user)` | L1 | Closes bet PDA after round settled (winning bet requires claimed = true). |
+| `sweep_vault(round_id)` | L1 | Closes vault to house after round settlement cleanup. |
 
 ---
 
@@ -281,32 +286,41 @@ Next.js API route at `/api/actions/bet/[round_id]`:
 - Builds: `place_bet` transaction with all required accounts
 - Returns: base64-encoded transaction for wallet to sign
 - Registered on dial.to for X/Twitter unfurling
+- Executes on L1 path (betting is not performed on ER)
 
 ---
 
 ## 9. Round Crank (Admin Automation)
 
-Node.js script that manages the full round lifecycle:
+Node.js service that manages the full round lifecycle and runs 24/7:
 
-- **Startup** — calls `initialize()` + `create_round(0)` + `delegate_round()`
-- **Every X minutes (close)** — calls `close_betting()` — game begins
-- **Every 100ms (game phase)** — calls `execute_move()` on ER endpoint until game ends
-- **On game end** — calls `settle_and_undelegate()` on ER
-- **Immediately after settle** — calls `create_round(id+1)` + `delegate_round()` for next round
-- Handles errors gracefully with exponential backoff retry
+- **Round management**
+  - create round on L1
+  - wait betting window
+  - close betting on L1
+  - delegate round on L1
+- **Game execution**
+  - execute move loop on ER (~100ms cadence)
+  - stop when winner exists or limit reached
+  - settle_and_undelegate on ER
+- **Cleanup**
+  - sweep vault on L1
+  - close bet accounts (losing immediately, winning after claim policy)
+- Handles retries/idempotency with exponential backoff
 - Streams board state via WebSocket to frontend for live animation
-- Logs all round results for monitoring
+- Logs and metrics for monitoring/restart recovery
 
 ---
 
-## 10. 4-Day Build Plan
+## 10. Build Milestones (Top-Level Tracking)
 
-| Day | Goals |
+| Milestone | Goals |
 |---|---|
-| Day 1 | Anchor program with Snake game logic. `execute_move` instruction working. Full round flow on devnet. Round crank script running. |
-| Day 2 | Expo app scaffolding. Home screen with live animated snake grids. `place_bet` working in app. Mobile Wallet Adapter integrated. |
-| Day 3 | Round result + claim flow. Leaderboard + Profile + AI Lab screens. Blinks API route live on Vercel. Register on dial.to. |
-| Day 4 | History screen. Social feed. UI polish. Bug fixes. Demo video. README. Submit. |
+| 1. Crank Service | 24/7 lifecycle automation on VPS: create -> close -> delegate -> execute loop -> settle -> cleanup. |
+| 2. WebSocket Bridge | Crank broadcasts round/board updates each move to subscribed clients. |
+| 3. Expo Core App | Wallet connect, live home grids, place bet (L1), result + claim flows. |
+| 4. Social + Blinks | Tapestry events/profile/leaderboard wiring, Blinks GET/POST API on Vercel. |
+| 5. Optional AI v2 | Add external AI decision input path (`execute_move_with_input`) after core stability. |
 
 ---
 

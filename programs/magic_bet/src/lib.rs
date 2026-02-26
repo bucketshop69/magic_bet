@@ -14,12 +14,17 @@ const VAULT_SEED: &[u8] = b"vault_v2";
 
 const BOARD_SIZE: usize = 20;
 const BOARD_CELLS: usize = BOARD_SIZE * BOARD_SIZE;
-const MAX_MOVES: u32 = 500;
+const MAX_MOVES: u32 = 300;
 
 const CELL_EMPTY: u8 = 0;
+const CELL_WALL: u8 = 1;
 const CELL_FOOD: u8 = 2;
 const SNAKE_MIN: u8 = 3;
 const SNAKE_MAX: u8 = 8;
+
+const FOOD_MIRROR_UNTIL_MOVE: u32 = 120;
+const SHRINK_START_MOVE: u32 = 150;
+const SHRINK_INTERVAL: u32 = 30;
 
 const MIN_BET_LAMPORTS: u64 = 10_000_000; // 0.01 SOL
 const MAX_BET_LAMPORTS: u64 = 1_000_000_000; // 1 SOL
@@ -272,10 +277,28 @@ pub mod magic_bet {
         let mut beta = SnakeRuntime::from_beta(round);
 
         let alpha_direction = alpha.choose_aggressive_direction();
-        let beta_direction = beta.choose_defensive_direction();
+        let beta_direction = beta.choose_aggressive_direction();
 
-        alpha.apply_move(alpha_direction, move_number);
-        beta.apply_move(beta_direction, move_number);
+        let alpha_ate = alpha.apply_move(alpha_direction, move_number);
+        let beta_ate = beta.apply_move(beta_direction, move_number);
+
+        if should_use_mirrored_food(move_number) {
+            if alpha_ate || beta_ate {
+                respawn_symmetric_food(&mut alpha, &mut beta)?;
+            }
+        } else {
+            if alpha_ate {
+                respawn_food_single(&mut alpha)?;
+            }
+            if beta_ate {
+                respawn_food_single(&mut beta)?;
+            }
+        }
+
+        apply_shrink_to_runtime(&mut alpha, move_number)?;
+        apply_shrink_to_runtime(&mut beta, move_number)?;
+        ensure_food_present(&mut alpha)?;
+        ensure_food_present(&mut beta)?;
 
         alpha.write_back_alpha(round);
         beta.write_back_beta(round);
@@ -846,58 +869,50 @@ impl SnakeRuntime {
             .find(|dir| is_safe_move(&self.board, step(self.head, *dir)))
     }
 
-    fn apply_move(&mut self, direction: Option<Direction>, move_number: u32) {
+    fn apply_move(&mut self, direction: Option<Direction>, move_number: u32) -> bool {
         if !self.alive {
-            return;
+            return false;
         }
 
         let direction = match direction {
             Some(value) => value,
             None => {
                 self.mark_dead(move_number);
-                return;
+                return false;
             }
         };
-
-        decay_board(&mut self.board);
 
         let next = step(self.head, direction);
         let next_index = match next {
             Some(value) => value,
             None => {
                 self.mark_dead(move_number);
-                return;
+                return false;
             }
         };
 
-        if is_snake(self.board[next_index as usize]) {
-            self.mark_dead(move_number);
-            return;
+        let ate_food = self.board[next_index as usize] == CELL_FOOD || next_index == self.food;
+
+        // Snake grows on food by skipping one decay cycle.
+        if !ate_food {
+            decay_board(&mut self.board);
         }
 
-        let ate_food = self.board[next_index as usize] == CELL_FOOD || next_index == self.food;
+        if is_snake(self.board[next_index as usize]) {
+            self.mark_dead(move_number);
+            return false;
+        }
+
         self.board[next_index as usize] = SNAKE_MAX;
         self.head = next_index;
         self.dir = direction;
 
         if ate_food {
             self.score = self.score.saturating_add(1);
-            self.spawn_food();
-        }
-    }
-
-    fn spawn_food(&mut self) {
-        for _ in 0..BOARD_CELLS {
-            self.seed = next_seed(self.seed);
-            let candidate = (self.seed % BOARD_CELLS as u64) as u16;
-            if self.board[candidate as usize] == CELL_EMPTY {
-                self.food = candidate;
-                self.board[candidate as usize] = CELL_FOOD;
-                return;
-            }
+            return true;
         }
 
-        self.food = self.head;
+        false
     }
 
     fn mark_dead(&mut self, move_number: u32) {
@@ -925,37 +940,28 @@ fn next_seed(seed: u64) -> u64 {
 
 fn initialize_round_state(round: &mut Round) -> Result<()> {
     let alpha_head = xy_to_index(3, 10).ok_or(MagicBetError::InvalidBoardSetup)?;
-    let beta_head = xy_to_index(16, 10).ok_or(MagicBetError::InvalidBoardSetup)?;
+    let beta_head = mirror_index(alpha_head);
 
-    let alpha_food = initialize_snake(
-        &mut round.alpha_board,
-        alpha_head,
-        Direction::Right,
-        &mut round.alpha_seed,
-    )?;
-    let beta_food = initialize_snake(
-        &mut round.beta_board,
-        beta_head,
-        Direction::Left,
-        &mut round.beta_seed,
-    )?;
+    initialize_snake(&mut round.alpha_board, alpha_head, Direction::Right)?;
+    initialize_snake(&mut round.beta_board, beta_head, Direction::Left)?;
 
     round.alpha_head = alpha_head;
     round.beta_head = beta_head;
-    round.alpha_food = alpha_food;
-    round.beta_food = beta_food;
+    round.alpha_food = alpha_head;
+    round.beta_food = beta_head;
     round.alpha_dir = Direction::Right;
     round.beta_dir = Direction::Left;
+
+    let mut alpha = SnakeRuntime::from_alpha(round);
+    let mut beta = SnakeRuntime::from_beta(round);
+    respawn_symmetric_food(&mut alpha, &mut beta)?;
+    alpha.write_back_alpha(round);
+    beta.write_back_beta(round);
 
     Ok(())
 }
 
-fn initialize_snake(
-    board: &mut [u8; BOARD_CELLS],
-    head: u16,
-    dir: Direction,
-    seed: &mut u64,
-) -> Result<u16> {
+fn initialize_snake(board: &mut [u8; BOARD_CELLS], head: u16, dir: Direction) -> Result<()> {
     board[head as usize] = SNAKE_MAX;
 
     let mut segment = head;
@@ -964,16 +970,103 @@ fn initialize_snake(
         board[segment as usize] = value;
     }
 
+    Ok(())
+}
+
+fn respawn_symmetric_food(alpha: &mut SnakeRuntime, beta: &mut SnakeRuntime) -> Result<()> {
+    clear_food_if_present(&mut alpha.board, alpha.food);
+    clear_food_if_present(&mut beta.board, beta.food);
+
     for _ in 0..BOARD_CELLS {
-        *seed = next_seed(*seed);
-        let candidate = (*seed % BOARD_CELLS as u64) as u16;
-        if board[candidate as usize] == CELL_EMPTY {
-            board[candidate as usize] = CELL_FOOD;
-            return Ok(candidate);
+        alpha.seed = next_seed(alpha.seed);
+        let alpha_candidate = (alpha.seed % BOARD_CELLS as u64) as u16;
+        let beta_candidate = mirror_index(alpha_candidate);
+        if alpha.board[alpha_candidate as usize] == CELL_EMPTY
+            && beta.board[beta_candidate as usize] == CELL_EMPTY
+        {
+            alpha.food = alpha_candidate;
+            beta.food = beta_candidate;
+            alpha.board[alpha_candidate as usize] = CELL_FOOD;
+            beta.board[beta_candidate as usize] = CELL_FOOD;
+            return Ok(());
         }
     }
 
     Err(MagicBetError::InvalidBoardSetup.into())
+}
+
+fn respawn_food_single(runtime: &mut SnakeRuntime) -> Result<()> {
+    clear_food_if_present(&mut runtime.board, runtime.food);
+
+    for _ in 0..BOARD_CELLS {
+        runtime.seed = next_seed(runtime.seed);
+        let candidate = (runtime.seed % BOARD_CELLS as u64) as u16;
+        if runtime.board[candidate as usize] == CELL_EMPTY {
+            runtime.food = candidate;
+            runtime.board[candidate as usize] = CELL_FOOD;
+            return Ok(());
+        }
+    }
+
+    Err(MagicBetError::InvalidBoardSetup.into())
+}
+
+fn ensure_food_present(runtime: &mut SnakeRuntime) -> Result<()> {
+    if runtime.board[runtime.food as usize] == CELL_FOOD {
+        return Ok(());
+    }
+    respawn_food_single(runtime)
+}
+
+fn clear_food_if_present(board: &mut [u8; BOARD_CELLS], index: u16) {
+    if board[index as usize] == CELL_FOOD {
+        board[index as usize] = CELL_EMPTY;
+    }
+}
+
+fn should_use_mirrored_food(move_number: u32) -> bool {
+    move_number <= FOOD_MIRROR_UNTIL_MOVE
+}
+
+fn shrink_level(move_number: u32) -> i16 {
+    if move_number < SHRINK_START_MOVE {
+        return 0;
+    }
+    let levels = 1 + ((move_number - SHRINK_START_MOVE) / SHRINK_INTERVAL) as i16;
+    let max_level = (BOARD_SIZE as i16 / 2) - 1;
+    levels.min(max_level)
+}
+
+fn is_in_shrunk_wall(index: u16, level: i16) -> bool {
+    if level <= 0 {
+        return false;
+    }
+    let (x, y) = index_to_xy(index);
+    let max = BOARD_SIZE as i16 - level;
+    x < level || y < level || x >= max || y >= max
+}
+
+fn apply_shrink_to_runtime(runtime: &mut SnakeRuntime, move_number: u32) -> Result<()> {
+    let level = shrink_level(move_number);
+    if level <= 0 {
+        return Ok(());
+    }
+
+    for index in 0..BOARD_CELLS as u16 {
+        if is_in_shrunk_wall(index, level) {
+            runtime.board[index as usize] = CELL_WALL;
+        }
+    }
+
+    if runtime.alive && is_in_shrunk_wall(runtime.head, level) {
+        runtime.mark_dead(move_number);
+    }
+
+    if runtime.board[runtime.food as usize] == CELL_WALL {
+        respawn_food_single(runtime)?;
+    }
+
+    Ok(())
 }
 
 fn determine_winner(round: &Round, force: bool) -> Option<AIChoice> {
@@ -1093,7 +1186,8 @@ fn is_safe_move(board: &[u8; BOARD_CELLS], next: Option<u16>) -> bool {
         None => return false,
     };
 
-    !is_snake(board[next as usize])
+    let cell = board[next as usize];
+    !is_snake(cell) && cell != CELL_WALL
 }
 
 fn is_snake(value: u8) -> bool {
@@ -1104,6 +1198,12 @@ fn manhattan(a: u16, b: u16) -> u16 {
     let (ax, ay) = index_to_xy(a);
     let (bx, by) = index_to_xy(b);
     ((ax - bx).abs() + (ay - by).abs()) as u16
+}
+
+fn mirror_index(index: u16) -> u16 {
+    let (x, y) = index_to_xy(index);
+    let mirrored_x = (BOARD_SIZE as i16 - 1) - x;
+    xy_to_index(mirrored_x, y).unwrap_or(index)
 }
 
 fn index_to_xy(index: u16) -> (i16, i16) {
@@ -1136,6 +1236,106 @@ fn opposite(direction: Direction) -> Direction {
         Direction::Right => Direction::Left,
         Direction::Down => Direction::Up,
         Direction::Left => Direction::Right,
+    }
+}
+
+#[cfg(test)]
+mod simulation_tests {
+    use super::*;
+
+    fn blank_round(round_id: u64, duration: i64) -> Round {
+        Round {
+            round_id,
+            status: RoundStatus::InProgress,
+            winner: None,
+            alpha_board: [CELL_EMPTY; BOARD_CELLS],
+            beta_board: [CELL_EMPTY; BOARD_CELLS],
+            alpha_seed: make_seed(round_id, 0xA11A_A11A_A11A_A11A),
+            beta_seed: make_seed(round_id, 0xB37A_B37A_B37A_B37A),
+            alpha_score: 0,
+            beta_score: 0,
+            alpha_alive: true,
+            beta_alive: true,
+            move_count: 0,
+            alpha_pool: 0,
+            beta_pool: 0,
+            start_time: 0,
+            end_time: None,
+            duration,
+            alpha_head: 0,
+            beta_head: 0,
+            alpha_food: 0,
+            beta_food: 0,
+            alpha_dir: Direction::Right,
+            beta_dir: Direction::Left,
+            alpha_death_move: None,
+            beta_death_move: None,
+            bump: 0,
+        }
+    }
+
+    fn simulate_round(round_id: u64, duration: i64) -> AIChoice {
+        let mut round = blank_round(round_id, duration);
+        initialize_round_state(&mut round).expect("round init should succeed");
+
+        for _ in 0..max_round_moves(duration) {
+            let move_number = round.move_count.saturating_add(1);
+            let mut alpha = SnakeRuntime::from_alpha(&round);
+            let mut beta = SnakeRuntime::from_beta(&round);
+
+            let alpha_direction = alpha.choose_aggressive_direction();
+            let beta_direction = beta.choose_aggressive_direction();
+            let alpha_ate = alpha.apply_move(alpha_direction, move_number);
+            let beta_ate = beta.apply_move(beta_direction, move_number);
+            if should_use_mirrored_food(move_number) {
+                if alpha_ate || beta_ate {
+                    respawn_symmetric_food(&mut alpha, &mut beta)
+                        .expect("symmetric food respawn should succeed");
+                }
+            } else {
+                if alpha_ate {
+                    respawn_food_single(&mut alpha).expect("alpha food respawn should succeed");
+                }
+                if beta_ate {
+                    respawn_food_single(&mut beta).expect("beta food respawn should succeed");
+                }
+            }
+
+            apply_shrink_to_runtime(&mut alpha, move_number).expect("alpha shrink should succeed");
+            apply_shrink_to_runtime(&mut beta, move_number).expect("beta shrink should succeed");
+            ensure_food_present(&mut alpha).expect("alpha food should exist");
+            ensure_food_present(&mut beta).expect("beta food should exist");
+
+            alpha.write_back_alpha(&mut round);
+            beta.write_back_beta(&mut round);
+            round.move_count = move_number;
+
+            if let Some(winner) = determine_winner(&round, false) {
+                return winner;
+            }
+        }
+
+        determine_winner(&round, true).unwrap_or(AIChoice::Draw)
+    }
+
+    #[test]
+    fn fairness_snapshot_500_rounds() {
+        let mut alpha = 0u32;
+        let mut beta = 0u32;
+        let mut draw = 0u32;
+
+        for round_id in 1..=500 {
+            match simulate_round(round_id, 45) {
+                AIChoice::Alpha => alpha += 1,
+                AIChoice::Beta => beta += 1,
+                AIChoice::Draw => draw += 1,
+            }
+        }
+
+        println!(
+            "fairness snapshot => alpha: {alpha}, beta: {beta}, draw: {draw}"
+        );
+        assert_eq!(alpha + beta + draw, 500);
     }
 }
 

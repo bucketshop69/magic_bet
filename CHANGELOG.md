@@ -29,6 +29,9 @@ All notable changes to this project are documented in this file.
   - runtime status/event log panel
 - Added root web scripts in `package.json`:
   - `web:install`, `web:dev`, `web:build`, `web:preview`
+- Added new planning PRDs:
+  - `docs/prds/012/012_final_ui_ux.md`
+  - `docs/prds/013/013_game_fairness_simulation.md`
 
 ### Changed
 
@@ -46,6 +49,13 @@ All notable changes to this project are documented in this file.
 - Crank health `/status` now returns orchestrator + websocket runtime stats in BigInt-safe JSON format.
 - Crank HTTP API now supports configurable CORS via `CORS_ORIGIN` (default `http://localhost:5173`) for browser-based web client access.
 - Claim UI now supports selecting and claiming older unclaimed winning rounds (not only the latest settled round).
+- Updated snake engine balancing:
+  - Alpha/Beta now share aggressive move policy
+  - max move cap effectively bounded to 300
+  - snake body growth enabled on food-eat turns
+  - symmetric opening state with mirrored starts and mirrored early food
+  - late-phase food switched to independent spawns (non-mirrored)
+  - shrinking wall phase added to force late-game resolution
 
 ### Fixed
 
@@ -60,6 +70,7 @@ All notable changes to this project are documented in this file.
 - Fixed browser runtime error `Buffer is not defined` in web client by adding browser-safe polyfills.
 - Fixed frontend bet amount parsing/validation with explicit `0.01` to `1` SOL bounds and clearer errors.
 - Fixed `claim_winnings` late-claim failure after `sweep_vault` by removing unnecessary `vault` account requirement from `ClaimWinnings`.
+- Reduced draw-heavy outcomes via mixed food policy + shrinking wall pressure. Latest 500-round simulation snapshot: `alpha 237 / beta 241 / draw 22`.
 
 ### Docs
 

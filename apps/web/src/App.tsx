@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as anchor from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
+import { SnakeBoard } from "./components/SnakeBoard";
+import { LcdButton } from "./components/ui/LcdButton";
+import { LcdInput } from "./components/ui/LcdInput";
+import { LcdSelect } from "./components/ui/LcdSelect";
+import { NavTabButton } from "./components/ui/NavTabButton";
+import { Panel } from "./components/ui/Panel";
+import { parseCrankStatus, parseWsEvent } from "./lib/adapters";
 import { APP_CONFIG } from "./lib/config";
 import {
   claimWinnings,
@@ -9,31 +16,29 @@ import {
   createWalletAdapter,
   fetchBet,
   fetchRound,
+  getPhantomProvider,
   lamportsFromSol,
   placeBet,
   type Choice,
 } from "./lib/program";
+import { deriveUiRoundView } from "./lib/uiState";
+import type { CrankStatus } from "./types/contracts";
 import type { RoundStateV1, WsEvent } from "./types/ws";
-import { SnakeBoard } from "./components/SnakeBoard";
-import "./styles.css";
-
-type CrankStatus = {
-  orchestrator?: {
-    currentRoundId?: string | null;
-    phase?: string;
-  };
-  ws?: {
-    clients?: number;
-    topics?: number;
-    subscriptions?: number;
-  };
-};
 
 const EMPTY_BOARD = new Array(400).fill(0);
 
 function short(pk?: string) {
   if (!pk) return "-";
   return `${pk.slice(0, 4)}...${pk.slice(-4)}`;
+}
+
+function winnerKey(value: unknown): "alpha" | "beta" | "draw" | null {
+  if (!value || typeof value !== "object") return null;
+  const keys = Object.keys(value as Record<string, unknown>);
+  if (keys.length === 0) return null;
+  const k = keys[0]?.toLowerCase();
+  if (k === "alpha" || k === "beta" || k === "draw") return k;
+  return null;
 }
 
 export default function App() {
@@ -46,6 +51,7 @@ export default function App() {
   const [roundId, setRoundId] = useState<bigint | null>(null);
   const [roundState, setRoundState] = useState<RoundStateV1 | null>(null);
   const [claimableRounds, setClaimableRounds] = useState<bigint[]>([]);
+  const [userBetRounds, setUserBetRounds] = useState<string[]>([]);
   const [selectedClaimRound, setSelectedClaimRound] = useState<string>("");
   const [betChoice, setBetChoice] = useState<Choice>("alpha");
   const [betAmountSol, setBetAmountSol] = useState("0.02");
@@ -57,9 +63,7 @@ export default function App() {
   const reconnectAttemptRef = useRef(0);
   const shouldReconnectRef = useRef(false);
   const wsGenerationRef = useRef(0);
-
-  const canBet = roundState?.status === "Active";
-  const canClaim = !!walletPk && selectedClaimRound.length > 0;
+  const lastRoundRef = useRef<string | null>(null);
 
   const addEvent = (line: string) => {
     setEvents((prev) => [line, ...prev].slice(0, 14));
@@ -70,41 +74,60 @@ export default function App() {
     return `round:${roundId.toString()}`;
   }, [roundId]);
 
-  function winnerKey(value: unknown): "alpha" | "beta" | "draw" | null {
-    if (!value || typeof value !== "object") return null;
-    const keys = Object.keys(value as Record<string, unknown>);
-    if (keys.length === 0) return null;
-    const k = keys[0]?.toLowerCase();
-    if (k === "alpha" || k === "beta" || k === "draw") return k;
-    return null;
-  }
+  const currentRoundId = roundId?.toString() ?? null;
+  const currentRoundClaimable = Boolean(
+    currentRoundId &&
+      claimableRounds.some((r) => r.toString() === currentRoundId)
+  );
+  const currentRoundHasUserBet = Boolean(
+    currentRoundId && userBetRounds.includes(currentRoundId)
+  );
+
+  const uiRound = deriveUiRoundView({
+    roundState,
+    walletConnected: !!walletPk,
+    currentRoundClaimable,
+    currentRoundHasUserBet,
+  });
+
+  const canBet = !!walletPk && !busy && uiRound.canPlaceBet;
+  const canClaim = !!walletPk && !busy && selectedClaimRound.length > 0;
 
   async function refreshClaimables(p: anchor.Program, user: PublicKey) {
     try {
       const allBets = await (p.account as any).bet.all();
-      const mine = allBets.filter(
+      const userBets = allBets.filter(
         (entry: any) =>
-          entry.account?.user?.toBase58?.() === user.toBase58() &&
-          !entry.account?.claimed
+          entry.account?.user?.toBase58?.() === user.toBase58()
       );
-
+      const userRoundsSet = new Set<string>();
       const winningRoundIds: bigint[] = [];
-      for (const entry of mine) {
+
+      for (const entry of userBets) {
         const round = BigInt(entry.account.roundId.toString());
+        const roundKey = round.toString();
+        userRoundsSet.add(roundKey);
+        const isClaimed = Boolean(entry.account.claimed);
+        if (isClaimed) continue;
+
         const roundAccount = await fetchRound(p, round);
         if (!roundAccount) continue;
         const winner = winnerKey(roundAccount.winner);
         if (!winner || winner === "draw") continue;
         const choice = winnerKey(entry.account.choice);
-        if (choice === winner) {
-          winningRoundIds.push(round);
-        }
+        if (choice === winner) winningRoundIds.push(round);
       }
 
       const uniqueDesc = Array.from(new Set(winningRoundIds.map(String)))
         .map((v) => BigInt(v))
         .sort((a, b) => (a > b ? -1 : 1));
+      const betRounds = Array.from(userRoundsSet).sort((a, b) =>
+        BigInt(a) > BigInt(b) ? -1 : 1
+      );
+
+      setUserBetRounds(betRounds);
       setClaimableRounds(uniqueDesc);
+
       if (uniqueDesc.length === 0) {
         setSelectedClaimRound("");
       } else if (
@@ -113,7 +136,6 @@ export default function App() {
       ) {
         setSelectedClaimRound(uniqueDesc[0].toString());
       }
-      addEvent(`Claimable rounds refreshed: ${uniqueDesc.length}`);
     } catch (err) {
       addEvent(`claimable refresh failed: ${(err as Error).message}`);
     }
@@ -125,11 +147,14 @@ export default function App() {
   }
 
   async function connectWallet() {
-    if (!window.solana?.isPhantom) {
-      addEvent("Phantom not found. Install Phantom extension.");
+    const phantom = getPhantomProvider();
+    if (!phantom) {
+      addEvent(
+        "Phantom not found. Install/enable Phantom in this browser profile and reload."
+      );
       return;
     }
-    const res = await window.solana.connect();
+    const res = await phantom.connect();
     setWalletPk(res.publicKey);
     const wallet = createWalletAdapter();
     const p = createProgram(connection, wallet);
@@ -140,10 +165,14 @@ export default function App() {
   }
 
   async function disconnectWallet() {
-    if (window.solana) await window.solana.disconnect();
+    const phantom = getPhantomProvider();
+    if (phantom) await phantom.disconnect();
     setWalletPk(null);
     setProgram(null);
     setBalanceSol(null);
+    setClaimableRounds([]);
+    setSelectedClaimRound("");
+    setUserBetRounds([]);
     addEvent("Wallet disconnected");
   }
 
@@ -151,21 +180,22 @@ export default function App() {
     try {
       const r = await fetch(`${APP_CONFIG.crankHttpUrl}/status`);
       if (!r.ok) throw new Error(`status ${r.status}`);
-      const data = (await r.json()) as CrankStatus;
+      const raw = await r.json();
+      const data = parseCrankStatus(raw);
       setCrankStatus(data);
-      const id = data.orchestrator?.currentRoundId;
+
+      const id = data.orchestrator.currentRoundId;
       if (id) {
         const parsed = BigInt(id);
         setRoundId(parsed);
-        if (program) {
-          const onChain = await fetchRound(program, parsed);
-          if (onChain) {
-            addEvent(`Round ${parsed.toString()} fetched from L1`);
-          }
-          if (walletPk) {
-            await refreshClaimables(program, walletPk);
-          }
+        if (id !== lastRoundRef.current) {
+          lastRoundRef.current = id;
+          addEvent(`Round ${id} discovered from crank`);
         }
+      }
+
+      if (program && walletPk) {
+        await refreshClaimables(program, walletPk);
       }
     } catch (err) {
       addEvent(`Status poll error: ${(err as Error).message}`);
@@ -204,17 +234,27 @@ export default function App() {
 
     ws.onmessage = (event) => {
       if (generation !== wsGenerationRef.current) return;
-      const parsed = JSON.parse(String(event.data)) as WsEvent;
+
+      let parsed: WsEvent;
+      try {
+        parsed = parseWsEvent(String(event.data));
+      } catch (err) {
+        addEvent(`WS parse error: ${(err as Error).message}`);
+        return;
+      }
+
       if (parsed.type === "error_v1") {
         addEvent(`WS error: ${parsed.code} ${parsed.message}`);
         return;
       }
+
       if (parsed.type === "round_transition_v1") {
         addEvent(
           `Round ${parsed.roundId} transition ${parsed.from} -> ${parsed.to}`
         );
         return;
       }
+
       if (parsed.type === "snapshot_v1") {
         setRoundState(parsed.roundState);
         if (parsed.roundState.status === "Settled" && program && walletPk) {
@@ -225,6 +265,7 @@ export default function App() {
         );
         return;
       }
+
       if (parsed.type === "round_state_v1") {
         setRoundState(parsed);
         if (parsed.status === "Settled" && program && walletPk) {
@@ -260,6 +301,7 @@ export default function App() {
       const sig = await placeBet(program, walletPk, roundId, betChoice, amount);
       addEvent(`place_bet success: ${sig.slice(0, 12)}...`);
       await refreshBalance(walletPk);
+      await refreshClaimables(program, walletPk);
     } catch (err) {
       addEvent(`place_bet failed: ${(err as Error).message}`);
     } finally {
@@ -297,7 +339,7 @@ export default function App() {
     }, 3500);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [program]);
+  }, [program, walletPk]);
 
   useEffect(() => {
     if (!topic) return;
@@ -308,120 +350,184 @@ export default function App() {
   }, [topic]);
 
   return (
-    <main className="layout">
-      <section className="topbar">
-        <div>
-          <h1>Magic Bet | Pass A</h1>
-          <p>Functional web control room for round stream + L1 actions.</p>
-        </div>
-        <div className="wallet-box">
-          <div>Wallet: {walletPk ? short(walletPk.toBase58()) : "Disconnected"}</div>
-          <div>Balance: {balanceSol == null ? "-" : `${balanceSol.toFixed(4)} SOL`}</div>
-          <div className="wallet-actions">
-            {!walletPk ? (
-              <button onClick={connectWallet}>Connect Phantom</button>
-            ) : (
-              <button className="ghost" onClick={disconnectWallet}>
-                Disconnect
-              </button>
-            )}
-          </div>
-        </div>
-      </section>
+    <main className="app-shell">
+      <section className="rail-grid">
+        <div className="rail-main">
+          <Panel className="score-shell">
+            <div className="score-team">
+              <span className="score-label">Alpha</span>
+              <div className="score-box">
+                <span className="score-value">{roundState?.alphaScore ?? 0}</span>
+                <span className="score-hint">Score</span>
+              </div>
+            </div>
+            <div className="center-state">
+              <div className={`status-pill ${uiRound.bannerTone}`}>
+                <span className="status-dot" />
+                {uiRound.statusLabel}
+              </div>
+              <div className="scoreline">
+                {(roundState?.alphaScore ?? 0).toString()}:
+                {(roundState?.betaScore ?? 0).toString()}
+              </div>
+              <span className="round-meta">
+                Round #{roundId?.toString() ?? "-"} · Move {roundState?.moveCount ?? 0}
+              </span>
+            </div>
+            <div className="score-team right">
+              <span className="score-label">Beta</span>
+              <div className="score-box">
+                <span className="score-value">{roundState?.betaScore ?? 0}</span>
+                <span className="score-hint">Score</span>
+              </div>
+            </div>
+          </Panel>
 
-      <section className="status-grid">
-        <div className="card">
-          <h2>Round</h2>
-          <div>ID: {roundId?.toString() ?? "-"}</div>
-          <div>Status: {roundState?.status ?? "-"}</div>
-          <div>Move: {roundState?.moveCount ?? 0}</div>
-          <div>Winner: {roundState?.winner ?? "-"}</div>
-          <div>Crank phase: {crankStatus?.orchestrator?.phase ?? "-"}</div>
-        </div>
-
-        <div className="card">
-          <h2>Bet</h2>
-          <label>
-            Choice
-            <select
-              value={betChoice}
-              onChange={(e) => setBetChoice(e.target.value as Choice)}
-            >
-              <option value="alpha">Alpha</option>
-              <option value="beta">Beta</option>
-            </select>
-          </label>
-          <label>
-            Amount (SOL)
-            <input
-              value={betAmountSol}
-              onChange={(e) => setBetAmountSol(e.target.value)}
-              placeholder="0.02 (min 0.01, max 1)"
+          <section className="boards">
+            <SnakeBoard
+              title="Alpha"
+              score={roundState?.alphaScore ?? 0}
+              alive={roundState?.alphaAlive ?? false}
+              board={roundState?.alphaBoard ?? EMPTY_BOARD}
             />
-          </label>
-          <button disabled={!walletPk || !canBet || !!busy} onClick={submitBet}>
-            {busy === "placing_bet" ? "Placing..." : "Place Bet (L1)"}
-          </button>
-          <label>
-            Claim Round
-            <select
-              value={selectedClaimRound}
-              onChange={(e) => setSelectedClaimRound(e.target.value)}
-            >
-              {claimableRounds.length === 0 ? (
-                <option value="">No claimable wins</option>
-              ) : null}
-              {claimableRounds.map((r) => (
-                <option key={r.toString()} value={r.toString()}>
-                  Round {r.toString()}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            className="ghost"
-            disabled={!walletPk || !canClaim || !!busy}
-            onClick={submitClaim}
-          >
-            {busy === "claiming"
-              ? "Claiming..."
-              : "Claim Winnings (L1)"}
-          </button>
+            <SnakeBoard
+              title="Beta"
+              score={roundState?.betaScore ?? 0}
+              alive={roundState?.betaAlive ?? false}
+              board={roundState?.betaBoard ?? EMPTY_BOARD}
+            />
+          </section>
+
+          <Panel className="action-shell">
+            <div className="bet-grid">
+              <div className="segmented">
+                <LcdButton
+                  variant="tab"
+                  active={betChoice === "alpha"}
+                  onClick={() => setBetChoice("alpha")}
+                >
+                  Alpha
+                </LcdButton>
+                <LcdButton
+                  variant="tab"
+                  active={betChoice === "beta"}
+                  onClick={() => setBetChoice("beta")}
+                >
+                  Beta
+                </LcdButton>
+              </div>
+              <label className="field">
+                <span>Bet Amount (SOL)</span>
+                <LcdInput
+                  value={betAmountSol}
+                  onChange={(e) => setBetAmountSol(e.target.value)}
+                  placeholder="0.02 (min 0.01, max 1)"
+                />
+              </label>
+              <LcdButton
+                variant="primary"
+                disabled={!canBet}
+                onClick={submitBet}
+              >
+                {busy === "placing_bet" ? "Placing..." : "Place Bet"}
+              </LcdButton>
+              <LcdButton
+                variant="secondary"
+                disabled={!program || !walletPk}
+                onClick={() => {
+                  if (program && walletPk) refreshClaimables(program, walletPk);
+                }}
+              >
+                Refresh
+              </LcdButton>
+            </div>
+
+            <div className="claim-grid">
+              <label className="field">
+                <span>Claim Round</span>
+                <LcdSelect
+                  value={selectedClaimRound}
+                  onChange={(e) => setSelectedClaimRound(e.target.value)}
+                >
+                  {claimableRounds.length === 0 ? (
+                    <option value="">No claimable wins</option>
+                  ) : null}
+                  {claimableRounds.map((r) => (
+                    <option key={r.toString()} value={r.toString()}>
+                      Round {r.toString()}
+                    </option>
+                  ))}
+                </LcdSelect>
+              </label>
+              <LcdButton
+                variant="secondary"
+                disabled={!canClaim}
+                onClick={submitClaim}
+              >
+                {busy === "claiming" ? "Claiming..." : "Claim Winnings"}
+              </LcdButton>
+            </div>
+
+            <div className="toolbar">
+              <NavTabButton active>Live</NavTabButton>
+              <NavTabButton>Ranking</NavTabButton>
+              <NavTabButton>History</NavTabButton>
+              {!walletPk ? (
+                <LcdButton variant="primary" onClick={connectWallet}>
+                  Connect Wallet
+                </LcdButton>
+              ) : (
+                <LcdButton variant="secondary" onClick={disconnectWallet}>
+                  Disconnect
+                </LcdButton>
+              )}
+            </div>
+          </Panel>
+
+          <section className="meta-grid">
+            <Panel className="meta-card">
+              <div className="meta-title">Round</div>
+              <div className="meta-line">ID: {roundId?.toString() ?? "-"}</div>
+              <div className="meta-line">Status: {roundState?.status ?? "-"}</div>
+              <div className="meta-line">Winner: {roundState?.winner ?? "-"}</div>
+              <div className="meta-line">
+                Crank phase: {crankStatus?.orchestrator.phase ?? "-"}
+              </div>
+            </Panel>
+            <Panel className="meta-card">
+              <div className="meta-title">Wallet</div>
+              <div className="meta-line">
+                Wallet: {walletPk ? short(walletPk.toBase58()) : "Disconnected"}
+              </div>
+              <div className="meta-line">
+                Balance: {balanceSol == null ? "-" : `${balanceSol.toFixed(4)} SOL`}
+              </div>
+              <div className="meta-line">
+                Claimables: {claimableRounds.length.toString()}
+              </div>
+              <div className="meta-line">Bet rounds: {userBetRounds.length}</div>
+            </Panel>
+            <Panel className="meta-card">
+              <div className="meta-title">Gateway</div>
+              <div className="meta-line">WS: {APP_CONFIG.wsUrl}</div>
+              <div className="meta-line">Topic: {topic ?? "-"}</div>
+              <div className="meta-line">
+                Clients: {crankStatus?.ws.clients ?? 0}
+              </div>
+              <div className="meta-line">Topics: {crankStatus?.ws.topics ?? 0}</div>
+            </Panel>
+          </section>
+
+          <Panel className="events">
+            <div className="meta-title">Event Log</div>
+            {events.length === 0 ? <div className="meta-line">No events yet</div> : null}
+            {events.map((eventLine, idx) => (
+              <div className="event" key={`${idx}-${eventLine}`}>
+                {eventLine}
+              </div>
+            ))}
+          </Panel>
         </div>
-
-        <div className="card">
-          <h2>Gateway</h2>
-          <div>WS: {APP_CONFIG.wsUrl}</div>
-          <div>Topic: {topic ?? "-"}</div>
-          <div>Clients: {crankStatus?.ws?.clients ?? 0}</div>
-          <div>Topics: {crankStatus?.ws?.topics ?? 0}</div>
-          <div>Subs: {crankStatus?.ws?.subscriptions ?? 0}</div>
-        </div>
-      </section>
-
-      <section className="boards">
-        <SnakeBoard
-          title="Alpha"
-          score={roundState?.alphaScore ?? 0}
-          alive={roundState?.alphaAlive ?? false}
-          board={roundState?.alphaBoard ?? EMPTY_BOARD}
-        />
-        <SnakeBoard
-          title="Beta"
-          score={roundState?.betaScore ?? 0}
-          alive={roundState?.betaAlive ?? false}
-          board={roundState?.betaBoard ?? EMPTY_BOARD}
-        />
-      </section>
-
-      <section className="events card">
-        <h2>Event Log</h2>
-        {events.length === 0 ? <div>No events yet</div> : null}
-        {events.map((eventLine, idx) => (
-          <div className="event" key={`${idx}-${eventLine}`}>
-            {eventLine}
-          </div>
-        ))}
       </section>
     </main>
   );

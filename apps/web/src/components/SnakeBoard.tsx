@@ -1,4 +1,5 @@
 import "./SnakeBoard.css";
+import { Panel } from "./ui/Panel";
 
 type Props = {
   title: string;
@@ -9,13 +10,14 @@ type Props = {
 
 function classForCell(v: number) {
   if (v === 2) return "cell food";
-  if (v >= 3 && v <= 8) return `cell snake s${v}`;
+  if (v >= 3 && v <= 7) return "cell snake body";
+  if (v >= 8) return "cell snake head";
   return "cell";
 }
 
 export function SnakeBoard({ title, score, alive, board }: Props) {
   return (
-    <section className="board-card">
+    <Panel className="board-card">
       <header className="board-header">
         <h3>{title}</h3>
         <div className={`pill ${alive ? "alive" : "dead"}`}>
@@ -28,6 +30,6 @@ export function SnakeBoard({ title, score, alive, board }: Props) {
           <div key={i} className={classForCell(cell)} />
         ))}
       </div>
-    </section>
+    </Panel>
   );
 }

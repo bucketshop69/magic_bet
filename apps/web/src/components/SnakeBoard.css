@@ -1,76 +1,74 @@
-.board-card {
-  border: 1px solid #c9d7d2;
-  border-radius: 16px;
-  background: linear-gradient(180deg, #f7fbfa 0%, #eef6f4 100%);
-  padding: 12px;
-}
-
 .board-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  border-bottom: 2px solid var(--color-border-strong);
+  padding-bottom: var(--space-sm);
 }
 
 .board-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 24px;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .pill {
   border-radius: 999px;
-  padding: 3px 8px;
-  font-size: 11px;
+  padding: 2px 10px;
+  font-size: 14px;
   font-weight: 700;
+  border: 2px solid var(--color-border-strong);
 }
 
 .pill.alive {
-  color: #1f7a46;
-  background: #d4f4df;
+  color: var(--color-text-primary);
+  background: #b2c095;
 }
 
 .pill.dead {
-  color: #9f1f1f;
-  background: #f8d5d5;
+  color: var(--color-text-primary);
+  background: #919f7a;
 }
 
 .score {
   margin-left: auto;
-  font-size: 12px;
-  color: #335650;
+  font-size: 16px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
 }
 
 .grid {
   display: grid;
   grid-template-columns: repeat(20, minmax(0, 1fr));
-  gap: 2px;
-  background: #d7e6e1;
-  border-radius: 10px;
+  gap: 1px;
+  background: var(--color-panel-muted);
+  border-radius: var(--radius-md);
+  border: 3px solid var(--color-border-strong);
   padding: 4px;
 }
 
 .cell {
   width: 100%;
   aspect-ratio: 1;
-  background: #f8fcfb;
-  border-radius: 2px;
+  background: #adb99a;
+  border-radius: 1px;
+  box-shadow: inset 0 0 0 1px rgba(47, 63, 47, 0.16);
 }
 
 .cell.food {
-  background: #ff9a3d;
+  background: #253625;
+  box-shadow: inset 0 0 0 1px #3f5d3f;
 }
 
-.cell.snake.s3,
-.cell.snake.s4 {
-  background: #5f8ef5;
+.cell.snake.body {
+  background: #1f2f1f;
+  box-shadow: inset 0 0 0 1px #3f5d3f;
 }
 
-.cell.snake.s5,
-.cell.snake.s6 {
-  background: #3f74e2;
-}
-
-.cell.snake.s7,
-.cell.snake.s8 {
-  background: #204fb7;
+.cell.snake.head {
+  background: #111b11;
+  box-shadow: inset 0 0 0 1px #4f6d4f;
 }

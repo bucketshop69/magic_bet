@@ -32,6 +32,14 @@ All notable changes to this project are documented in this file.
 - Added new planning PRDs:
   - `docs/prds/012/012_final_ui_ux.md`
   - `docs/prds/013/013_game_fairness_simulation.md`
+- Added web UI architecture primitives under `apps/web/src/components/ui/*`:
+  - `Panel`, `LcdButton`, `LcdInput`, `LcdSelect`, and `NavTabButton`.
+- Added typed frontend data contracts/adapters:
+  - `apps/web/src/types/contracts.ts`
+  - `apps/web/src/lib/adapters.ts`
+  - `apps/web/src/lib/uiState.ts`
+- Added shared web theme token module:
+  - `apps/web/src/theme/tokens.ts`
 
 ### Changed
 
@@ -56,6 +64,12 @@ All notable changes to this project are documented in this file.
   - symmetric opening state with mirrored starts and mirrored early food
   - late-phase food switched to independent spawns (non-mirrored)
   - shrinking wall phase added to force late-game resolution
+- Refactored `apps/web` to the LCD/Nokia-style design system:
+  - centered 12-col shell with 8-col gameplay rail
+  - reusable token-driven styling via CSS vars
+  - deterministic round-state-to-UI mapping (`Idle`, `BettingOpen`, `InProgress`, `Settled`, `Claimable`, `Claimed`)
+  - refreshed board visuals to match retro palette while preserving live state rendering
+- Updated `docs/prds/012/012_final_ui_ux.md` with implementation status for steps 1-5 and 7.
 
 ### Fixed
 
@@ -71,6 +85,10 @@ All notable changes to this project are documented in this file.
 - Fixed frontend bet amount parsing/validation with explicit `0.01` to `1` SOL bounds and clearer errors.
 - Fixed `claim_winnings` late-claim failure after `sweep_vault` by removing unnecessary `vault` account requirement from `ClaimWinnings`.
 - Reduced draw-heavy outcomes via mixed food policy + shrinking wall pressure. Latest 500-round simulation snapshot: `alpha 237 / beta 241 / draw 22`.
+- Fixed Phantom wallet detection in web app by supporting all common injection paths:
+  - `window.phantom.solana`
+  - `window.solana`
+  - `window.solana.providers[]`
 
 ### Docs
 

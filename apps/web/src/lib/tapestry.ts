@@ -1,6 +1,6 @@
 const BASE_URL = "https://api.usetapestry.dev/api/v1";
 const API_KEY = import.meta.env.VITE_TAPESTRY_API_KEY as string | undefined;
-const NAMESPACE = import.meta.env.VITE_TAPESTRY_NAMESPACE ?? "magic_bet";
+const NAMESPACE = import.meta.env.VITE_TAPESTRY_NAMESPACE ?? "magicbet";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

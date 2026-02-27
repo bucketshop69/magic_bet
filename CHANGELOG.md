@@ -19,6 +19,49 @@ All notable changes to this project are documented in this file.
   - Implementation order and failure handling policy (Tapestry errors never block round lifecycle).
   - Out-of-scope items called out explicitly (no comments, no likes, no Tapestry leaderboard).
 
+### Added
+
+- Added social UX PRDs:
+  - `docs/prds/014/014_social_ux.md`
+  - `docs/prds/015/015_feed_ux_polish.md`
+  - `docs/prds/016/016_profile_ux_polish.md`
+- Added new route-level web screens:
+  - `apps/web/src/pages/FeedPage.tsx`
+  - `apps/web/src/pages/ProfilePage.tsx`
+- Added crank-hosted social proxy routes (`/social/*`, `/api/v1/*`) in health server to forward browser-safe requests to Tapestry.
+- Added Solana wallet adapter stack in web app:
+  - `@solana/wallet-adapter-react`
+  - `@solana/wallet-adapter-react-ui`
+  - Phantom, Solflare, Coinbase Wallet, Trust adapters
+
+### Changed
+
+- Feed UX now renders one unified stream combining:
+  - personal social activity
+  - personal bet content
+  - global round result content
+  - live websocket round lifecycle strips
+- Feed "connect wallet" empty state now uses a centered LCD connect button and larger activity text.
+- App shell now keeps toolbar globally visible across routes with wallet menu actions for profile, logout, and wallet switching.
+- Frontend Tapestry integration now defaults to crank proxy mode (`${VITE_CRANK_HTTP_URL}/social`) with optional direct mode override via `VITE_TAPESTRY_BASE_URL`.
+- Profile creation username format changed from `xxxx...yyyy` to compact `xxxxyyyy` (first 4 + last 4).
+- Crank Tapestry client now appends API key via query param and redacts key from logged URLs.
+
+### Fixed
+
+- Fixed browser CORS failures for direct Tapestry calls by routing through crank social proxy.
+- Fixed compatibility gaps with current Tapestry API:
+  - migrated writes to `/profiles/findOrCreate` and `/contents/findOrCreate`
+  - normalized payload shape to `{ id, profileId, properties, execution }`
+  - normalized blockchain enum to `SOLANA`
+- Fixed follower and feed endpoint mapping mismatches through legacy->new endpoint rewrites in proxy layer.
+- Fixed round winner parsing for Anchor enum/option shapes (`{ some: { alpha } }`) to prevent false `UNKNOWN` result text.
+- Fixed round-result content text generation to gracefully handle unknown/invalid winners without misleading winner labels.
+
+### Validation
+
+- Web app build passes after wallet adapter + social integration changes (`npm run build` in `apps/web`).
+
 ---
 
 ## [Unreleased] - 2026-02-25

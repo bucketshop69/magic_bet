@@ -27,41 +27,18 @@ export function createProgram(connection: Connection, wallet: anchor.Wallet) {
   return new Program(idl as anchor.Idl, provider) as Program<any>;
 }
 
-function isPhantomProvider(value: unknown): value is NonNullable<Window["solana"]> {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      (value as any).isPhantom &&
-      typeof (value as any).connect === "function" &&
-      typeof (value as any).disconnect === "function"
-  );
-}
-
-export function getPhantomProvider(): NonNullable<Window["solana"]> | null {
-  const directPhantom = window.phantom?.solana;
-  if (isPhantomProvider(directPhantom)) return directPhantom;
-
-  const injected = window.solana;
-  if (isPhantomProvider(injected)) return injected;
-
-  const providers = (window.solana as any)?.providers as unknown[] | undefined;
-  if (Array.isArray(providers)) {
-    const phantom = providers.find((p) => isPhantomProvider(p));
-    if (phantom) return phantom;
-  }
-
-  return null;
-}
-
-export function createWalletAdapter() {
-  const provider = getPhantomProvider();
-  if (!provider) {
-    throw new Error("Phantom wallet not found");
+export function createWalletAdapter(wallet: {
+  publicKey: PublicKey | null;
+  signTransaction?: (...args: any[]) => Promise<any>;
+  signAllTransactions?: (...args: any[]) => Promise<any>;
+}) {
+  if (!wallet.publicKey || !wallet.signTransaction || !wallet.signAllTransactions) {
+    throw new Error("Wallet adapter missing signing capabilities");
   }
   return {
-    publicKey: provider.publicKey!,
-    signTransaction: provider.signTransaction.bind(provider),
-    signAllTransactions: provider.signAllTransactions.bind(provider),
+    publicKey: wallet.publicKey,
+    signTransaction: wallet.signTransaction.bind(wallet),
+    signAllTransactions: wallet.signAllTransactions.bind(wallet),
   } as anchor.Wallet;
 }
 

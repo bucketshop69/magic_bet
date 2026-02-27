@@ -24,7 +24,10 @@ export class TapestryClient {
       return null;
     }
 
-    const url = `${this.baseUrl}${endpoint}`;
+    const upstreamUrl = new URL(`${this.baseUrl}${endpoint}`);
+    upstreamUrl.searchParams.set("apiKey", this.config.apiKey);
+    const url = upstreamUrl.toString();
+    const logUrl = `${upstreamUrl.origin}${upstreamUrl.pathname}`;
     const headers = {
       "Content-Type": "application/json",
       "x-api-key": this.config.apiKey,
@@ -37,7 +40,7 @@ export class TapestryClient {
       if (!resp.ok) {
         const text = await resp.text();
         this.config.log.warn(
-          { url, status: resp.status, response: text },
+          { url: logUrl, status: resp.status, response: text },
           "tapestry api error (non-blocking)"
         );
         return null;
@@ -45,7 +48,7 @@ export class TapestryClient {
       return await resp.json();
     } catch (err: any) {
       this.config.log.error(
-        { url, err: err.message },
+        { url: logUrl, err: err.message },
         "tapestry network error (non-blocking)"
       );
       return null;

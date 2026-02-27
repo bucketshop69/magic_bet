@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import * as anchor from "@coral-xyz/anchor";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey } from "@solana/web3.js";
 import { SnakeBoard } from "./components/SnakeBoard";
 import { LcdButton } from "./components/ui/LcdButton";
@@ -16,13 +19,14 @@ import {
   createWalletAdapter,
   fetchBet,
   fetchRound,
-  getPhantomProvider,
   lamportsFromSol,
   placeBet,
   type Choice,
 } from "./lib/program";
 import { deriveUiRoundView } from "./lib/uiState";
-import { findOrCreateProfile } from "./lib/tapestry";
+import { findOrCreateProfile, publishBetEvent } from "./lib/tapestry";
+import { FeedPage } from "./pages/FeedPage";
+import { ProfilePage } from "./pages/ProfilePage";
 import type { CrankStatus } from "./types/contracts";
 import type { RoundStateV1, WsEvent } from "./types/ws";
 
@@ -43,7 +47,19 @@ function winnerKey(value: unknown): "alpha" | "beta" | "draw" | null {
 }
 
 export default function App() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const {
+    wallet,
+    publicKey: adapterPublicKey,
+    connect,
+    disconnect,
+    signTransaction,
+    signAllTransactions,
+  } = useWallet();
+  const { setVisible: setWalletModalVisible } = useWalletModal();
   const [walletPk, setWalletPk] = useState<PublicKey | null>(null);
+  const [tapestryProfileId, setTapestryProfileId] = useState<string | null>(null);
   const [connection] = useState(() => createConnection());
   const [program, setProgram] = useState<anchor.Program | null>(null);
   const [balanceSol, setBalanceSol] = useState<number | null>(null);
@@ -67,6 +83,7 @@ export default function App() {
   const wsGenerationRef = useRef(0);
   const lastRoundRef = useRef<string | null>(null);
   const walletMenuRef = useRef<HTMLDivElement | null>(null);
+  const walletSyncRef = useRef<string | null>(null);
 
   const addEvent = (line: string) => {
     setEvents((prev) => [line, ...prev].slice(0, 14));
@@ -150,37 +167,27 @@ export default function App() {
   }
 
   async function connectWallet() {
-    const phantom = getPhantomProvider();
-    if (!phantom) {
-      addEvent(
-        "Phantom not found. Install/enable Phantom in this browser profile and reload."
-      );
-      return;
+    try {
+      if (!wallet) {
+        setWalletModalVisible(true);
+        return;
+      }
+      await connect();
+      setWalletMenuOpen(false);
+    } catch (err) {
+      addEvent(`connect wallet failed: ${(err as Error).message}`);
+      setWalletModalVisible(true);
     }
-    const res = await phantom.connect();
-    setWalletPk(res.publicKey);
-    const wallet = createWalletAdapter();
-    const p = createProgram(connection, wallet);
-    setProgram(p);
-    await refreshBalance(res.publicKey);
-    await refreshClaimables(p, res.publicKey);
-    setWalletMenuOpen(false);
-    addEvent(`Wallet connected: ${res.publicKey.toBase58()}`);
-    // Register / fetch Tapestry profile (fire-and-forget)
-    findOrCreateProfile(res.publicKey.toBase58()).catch(() => null);
   }
 
   async function disconnectWallet() {
-    const phantom = getPhantomProvider();
-    if (phantom) await phantom.disconnect();
-    setWalletPk(null);
-    setProgram(null);
-    setBalanceSol(null);
-    setClaimableRounds([]);
-    setSelectedClaimRound("");
-    setUserBetRounds([]);
-    setWalletMenuOpen(false);
-    addEvent("Wallet disconnected");
+    try {
+      await disconnect();
+    } catch (err) {
+      addEvent(`disconnect wallet failed: ${(err as Error).message}`);
+    } finally {
+      setWalletMenuOpen(false);
+    }
   }
 
   async function copyWalletAddress() {
@@ -334,6 +341,15 @@ export default function App() {
       addEvent(`place_bet success: ${sig.slice(0, 12)}...`);
       await refreshBalance(walletPk);
       await refreshClaimables(program, walletPk);
+      // Publish bet event to Tapestry social layer (fire-and-forget)
+      if (tapestryProfileId) {
+        publishBetEvent(tapestryProfileId, {
+          roundId: roundId.toString(),
+          choice: betChoice,
+          amountSol: parseFloat(betAmountSol),
+          txSig: sig,
+        }).catch(() => null);
+      }
     } catch (err) {
       addEvent(`place_bet failed: ${(err as Error).message}`);
     } finally {
@@ -363,6 +379,54 @@ export default function App() {
       setBusy(null);
     }
   }
+
+  useEffect(() => {
+    const currentPk = adapterPublicKey?.toBase58() ?? null;
+    if (walletSyncRef.current === currentPk) return;
+    walletSyncRef.current = currentPk;
+
+    if (!adapterPublicKey) {
+      setWalletPk(null);
+      setTapestryProfileId(null);
+      setProgram(null);
+      setBalanceSol(null);
+      setClaimableRounds([]);
+      setSelectedClaimRound("");
+      setUserBetRounds([]);
+      addEvent("Wallet disconnected");
+      return;
+    }
+
+    setWalletPk(adapterPublicKey);
+
+    if (!signTransaction || !signAllTransactions) {
+      addEvent("Wallet signer unavailable");
+      return;
+    }
+
+    const walletAdapter = createWalletAdapter({
+      publicKey: adapterPublicKey,
+      signTransaction,
+      signAllTransactions,
+    });
+    const p = createProgram(connection, walletAdapter);
+    setProgram(p);
+    refreshBalance(adapterPublicKey).catch(() => null);
+    refreshClaimables(p, adapterPublicKey).catch(() => null);
+    addEvent(`Wallet connected: ${adapterPublicKey.toBase58()}`);
+
+    // Register / fetch Tapestry profile — store the ID for feed + bet events
+    findOrCreateProfile(adapterPublicKey.toBase58())
+      .then((profile) => {
+        if (profile?.id) {
+          setTapestryProfileId(profile.id);
+          addEvent(`Social profile ready: ${profile.id}`);
+        } else {
+          addEvent("Social profile unavailable");
+        }
+      })
+      .catch(() => null);
+  }, [adapterPublicKey, connection, signAllTransactions, signTransaction]);
 
   useEffect(() => {
     pollCrankStatus();
@@ -396,10 +460,31 @@ export default function App() {
     };
   }, [walletMenuOpen]);
 
+    const isHome = location.pathname === "/";
+  const isFeed = location.pathname === "/feed";
+  const isProfile = location.pathname === "/profile";
+
   return (
     <main className="app-shell">
       <section className="rail-grid">
         <div className="rail-main">
+          {/* ── Route content ── */}
+          <div className="route-content">
+            <Routes>
+            <Route
+              path="/feed"
+              element={
+                <FeedPage
+                  profileId={tapestryProfileId}
+                  walletConnected={Boolean(walletPk)}
+                  liveEvents={events}
+                  onConnectWallet={connectWallet}
+                />
+              }
+            />
+            <Route path="/profile" element={<ProfilePage walletPk={walletPk} profileId={tapestryProfileId} />} />
+            <Route path="/" element={
+              <>
           <Panel className="score-shell">
             <div className="score-team">
               <span className="score-label">Alpha</span>
@@ -517,71 +602,9 @@ export default function App() {
               </LcdButton>
             </div>
 
-            <div className="toolbar">
-              <div className="toolbar-nav">
-                <NavTabButton active>Live</NavTabButton>
-                <NavTabButton>Ranking</NavTabButton>
-                <NavTabButton>History</NavTabButton>
-              </div>
-              <div className="toolbar-wallet">
-                {!walletPk ? (
-                  <LcdButton
-                    variant="primary"
-                    icon="power_settings_new"
-                    className="toolbar-power-btn"
-                    aria-label="Connect Wallet"
-                    title="Connect Wallet"
-                    onClick={connectWallet}
-                  />
-                ) : (
-                  <div className="wallet-menu-wrap" ref={walletMenuRef}>
-                    <LcdButton
-                      variant="secondary"
-                      icon="account_balance_wallet"
-                      className="wallet-trigger"
-                      aria-label={`Wallet ${short(walletPk.toBase58())}`}
-                      title={walletPk.toBase58()}
-                      onClick={() => setWalletMenuOpen((v) => !v)}
-                    >
-                      {short(walletPk.toBase58())}
-                    </LcdButton>
-                    {walletMenuOpen ? (
-                      <div className="wallet-dropdown" role="menu">
-                        <button
-                          type="button"
-                          className="wallet-menu-item"
-                          onClick={copyWalletAddress}
-                        >
-                          <span
-                            className="material-symbols-outlined wallet-menu-icon"
-                            aria-hidden="true"
-                          >
-                            content_copy
-                          </span>
-                          <span>Copy Address</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="wallet-menu-item"
-                          onClick={disconnectWallet}
-                        >
-                          <span
-                            className="material-symbols-outlined wallet-menu-icon"
-                            aria-hidden="true"
-                          >
-                            logout
-                          </span>
-                          <span>Logout</span>
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-            </div>
           </Panel>
 
-          <section className="meta-grid">
+          {/* <section className="meta-grid">
             <Panel className="meta-card">
               <div className="meta-title">Round</div>
               <div className="meta-line">ID: {roundId?.toString() ?? "-"}</div>
@@ -593,9 +616,6 @@ export default function App() {
             </Panel>
             <Panel className="meta-card">
               <div className="meta-title">Wallet</div>
-              <div className="meta-line">
-                Wallet: {walletPk ? short(walletPk.toBase58()) : "Disconnected"}
-              </div>
               <div className="meta-line">
                 Balance: {balanceSol == null ? "-" : `${balanceSol.toFixed(4)} SOL`}
               </div>
@@ -623,7 +643,76 @@ export default function App() {
                 {eventLine}
               </div>
             ))}
-          </Panel>
+          </Panel> */}
+              </>
+            } />
+          </Routes>
+          </div>
+
+          {/* ── Global toolbar — always visible on every route ── */}
+          <div className="toolbar">
+            <div className="toolbar-nav">
+              <NavTabButton active={isHome} onClick={() => navigate("/")}>Live</NavTabButton>
+              <NavTabButton active={isFeed} onClick={() => navigate("/feed")}>Feed</NavTabButton>
+              <NavTabButton>Ranking</NavTabButton>
+            </div>
+            <div className="toolbar-wallet">
+              {!walletPk ? (
+                <LcdButton
+                  variant="primary"
+                  icon="power_settings_new"
+                  className="toolbar-power-btn"
+                  aria-label="Connect Wallet"
+                  title="Connect Wallet"
+                  onClick={connectWallet}
+                />
+              ) : (
+                <div className="wallet-menu-wrap" ref={walletMenuRef}>
+                  <LcdButton
+                    variant="secondary"
+                    icon="account_balance_wallet"
+                    className="wallet-trigger"
+                    aria-label={`Wallet ${short(walletPk.toBase58())}`}
+                    title={walletPk.toBase58()}
+                    onClick={() => setWalletMenuOpen((v) => !v)}
+                  >
+                    {short(walletPk.toBase58())}
+                  </LcdButton>
+                  {walletMenuOpen ? (
+                    <div className="wallet-dropdown" role="menu">
+                      <button
+                        type="button"
+                        className="wallet-menu-item"
+                        onClick={() => { setWalletMenuOpen(false); navigate("/profile"); }}
+                      >
+                        <span className="material-symbols-outlined wallet-menu-icon" aria-hidden="true">person</span>
+                        <span>Profile</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="wallet-menu-item"
+                        onClick={() => {
+                          setWalletMenuOpen(false);
+                          setWalletModalVisible(true);
+                        }}
+                      >
+                        <span className="material-symbols-outlined wallet-menu-icon" aria-hidden="true">sync_alt</span>
+                        <span>Switch Wallet</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="wallet-menu-item"
+                        onClick={disconnectWallet}
+                      >
+                        <span className="material-symbols-outlined wallet-menu-icon" aria-hidden="true">logout</span>
+                        <span>Logout</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </section>
     </main>

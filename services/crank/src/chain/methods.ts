@@ -3,9 +3,22 @@ import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { betPda, configPda, roundPda, vaultPda, housePda } from "./pdas";
 
 const enumKey = (value: unknown): string | null => {
+  if (typeof value === "string") return value;
   if (!value || typeof value !== "object") return null;
   const keys = Object.keys(value as Record<string, unknown>);
-  return keys.length > 0 ? keys[0] : null;
+  if (keys.length === 0) return null;
+  const first = keys[0] ?? null;
+  if (!first) return null;
+
+  // Anchor Option<T> enum shape may be { some: { alpha: {} } } or { none: {} }.
+  const lower = first.toLowerCase();
+  if (lower === "some") {
+    const inner = (value as Record<string, unknown>)[first];
+    return enumKey(inner);
+  }
+  if (lower === "none") return null;
+
+  return first;
 };
 
 export async function fetchConfig(program: any) {
@@ -147,7 +160,11 @@ export function getRoundPhase(roundAccount: any): string {
 }
 
 export function getAiChoice(value: unknown): string {
-  return (enumKey(value) ?? "unknown").toLowerCase();
+  const normalized = (enumKey(value) ?? "").toLowerCase();
+  if (normalized === "alpha" || normalized === "beta" || normalized === "draw") {
+    return normalized;
+  }
+  return "unknown";
 }
 
 export function hasWinner(roundAccount: any): boolean {

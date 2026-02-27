@@ -30,16 +30,13 @@ export async function publishBetEvent(
   }
 
   const body = {
+    id: contentId,
     profileId: profile.id,
-    content: {
-      id: contentId,
-      text,
-      properties,
-    },
+    properties: [...properties, { key: "text", value: text }],
     execution: "FAST_UNCONFIRMED",
   };
 
-  await client.request("/contents", {
+  await client.request("/contents/findOrCreate", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -59,20 +56,24 @@ export async function publishRoundResult(
 
   const profile = await findOrCreateProfile(client, houseWallet);
   if (!profile || !profile.id) return;
+  const winner = params.winner.toLowerCase();
+  const isKnownWinner = winner === "alpha" || winner === "beta" || winner === "draw";
 
   const contentId = `result-${params.roundId}`;
   const text =
-    params.winner === "draw"
+    winner === "draw"
       ? `Round #${params.roundId} settled in a DRAW.`
-      : `Round #${params.roundId} settled — ${params.winner.toUpperCase()} wins!` +
+      : isKnownWinner
+      ? `Round #${params.roundId} settled — ${winner.toUpperCase()} wins!` +
         (params.alphaScore != null && params.betaScore != null
           ? ` (score: ${params.alphaScore} vs ${params.betaScore})`
-          : "");
+          : "")
+      : `Round #${params.roundId} settled.`;
 
   const properties = [
     { key: "type", value: "round_result" },
     { key: "round_id", value: String(params.roundId) },
-    { key: "winner", value: params.winner },
+    { key: "winner", value: winner },
   ];
   if (params.alphaScore != null) {
     properties.push({ key: "alpha_score", value: String(params.alphaScore) });
@@ -82,16 +83,13 @@ export async function publishRoundResult(
   }
 
   const body = {
+    id: contentId,
     profileId: profile.id,
-    content: {
-      id: contentId,
-      text,
-      properties,
-    },
+    properties: [...properties, { key: "text", value: text }],
     execution: "FAST_UNCONFIRMED",
   };
 
-  await client.request("/contents", {
+  await client.request("/contents/findOrCreate", {
     method: "POST",
     body: JSON.stringify(body),
   });

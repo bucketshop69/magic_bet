@@ -22,6 +22,7 @@ import {
   type Choice,
 } from "./lib/program";
 import { deriveUiRoundView } from "./lib/uiState";
+import { findOrCreateProfile } from "./lib/tapestry";
 import type { CrankStatus } from "./types/contracts";
 import type { RoundStateV1, WsEvent } from "./types/ws";
 
@@ -162,6 +163,8 @@ export default function App() {
     await refreshBalance(res.publicKey);
     await refreshClaimables(p, res.publicKey);
     addEvent(`Wallet connected: ${res.publicKey.toBase58()}`);
+    // Register / fetch Tapestry profile (fire-and-forget)
+    findOrCreateProfile(res.publicKey.toBase58()).catch(() => null);
   }
 
   async function disconnectWallet() {

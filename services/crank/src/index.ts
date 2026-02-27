@@ -7,6 +7,7 @@ import { RoundOrchestrator } from "./core/orchestrator";
 import { createHealthServer } from "./api/health";
 import { validateStartup } from "./core/startupGuards";
 import { RoundWsGateway } from "./ws/server";
+import { TapestryClient } from "./tapestry/client";
 
 async function main() {
   const env = loadEnv();
@@ -24,6 +25,17 @@ async function main() {
     maxConnectionsPerIpPerMin: env.WS_MAX_CONNECTIONS_PER_IP_PER_MIN,
     log,
   });
+  const tapestry = new TapestryClient({
+    apiKey: env.TAPESTRY_API_KEY,
+    namespace: env.TAPESTRY_NAMESPACE,
+    log,
+  });
+  if (tapestry.isConfigured) {
+    log.info({ namespace: env.TAPESTRY_NAMESPACE }, "tapestry social layer enabled");
+  } else {
+    log.warn("TAPESTRY_API_KEY not set — social layer disabled");
+  }
+
   const orchestrator = new RoundOrchestrator({
     env,
     log,
@@ -31,6 +43,7 @@ async function main() {
     l1,
     er,
     gateway,
+    tapestry,
   });
 
   const healthServer = createHealthServer(

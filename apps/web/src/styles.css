@@ -2,6 +2,10 @@
 
 :root {
   font-family: var(--font-body, "Inter", "Segoe UI", sans-serif);
+  --color-scrollbar-track: var(--color-panel-muted, #97a77a);
+  --color-scrollbar-thumb: var(--color-interactive, #1f2f1f);
+  --color-scrollbar-thumb-hover: var(--color-interactive-hover, #314431);
+  --color-scrollbar-corner: var(--color-panel, #a8b68c);
 }
 
 * {
@@ -17,6 +21,41 @@ body {
     var(--color-app-bg-top),
     var(--color-app-bg-bottom)
   );
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--color-scrollbar-track);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    var(--color-scrollbar-thumb-hover),
+    var(--color-scrollbar-thumb)
+  );
+  border: 2px solid var(--color-scrollbar-track);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--color-scrollbar-corner);
 }
 
 .app-shell {
@@ -200,6 +239,13 @@ body {
   font-size: 44px;
   line-height: 1;
   letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.scoreline-alpha {
+  color: #cf5656;
 }
 
 .round-meta {
@@ -234,6 +280,11 @@ body {
   border-radius: var(--radius-md);
   padding: 4px;
   gap: 4px;
+}
+
+.bet-alpha-tab .lcd-btn-icon,
+.bet-alpha-tab .lcd-btn-content > span:last-child {
+  color: #cf5656;
 }
 
 .claim-grid {
@@ -556,8 +607,11 @@ body {
   border-radius: var(--radius-lg);
   padding: var(--space-md);
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: var(--space-sm);
   min-height: 320px;
+  height: clamp(320px, calc(100dvh - 220px), 760px);
+  overflow: hidden;
 }
 
 .feed-header {
@@ -590,6 +644,8 @@ body {
   font-size: 14px;
   padding: var(--space-lg);
   text-align: center;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .feed-hint {
@@ -614,6 +670,9 @@ body {
   padding: 0;
   display: grid;
   gap: var(--space-xs);
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .feed-item {

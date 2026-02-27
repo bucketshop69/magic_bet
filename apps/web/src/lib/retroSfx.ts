@@ -12,6 +12,8 @@ export type RetroSfxName =
   | "lose"
   | "draw";
 
+const SFX_MUTE_STORAGE_KEY = "magicbet.sfxMuted";
+
 type SfxConfig = {
   url: string;
   volume: number;
@@ -34,8 +36,15 @@ export function useRetroSfx() {
   const unlockedRef = useRef(false);
   const poolRef = useRef<Map<string, HTMLAudioElement[]>>(new Map());
   const primedRef = useRef(false);
-  const mutedRef = useRef(false);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(SFX_MUTE_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const mutedRef = useRef(isMuted);
 
   const getAudio = useCallback((url: string) => {
     const pool = poolRef.current.get(url) ?? [];
@@ -92,6 +101,18 @@ export function useRetroSfx() {
   const toggleMute = useCallback(() => {
     setMuted(!mutedRef.current);
   }, [setMuted]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        SFX_MUTE_STORAGE_KEY,
+        isMuted ? "1" : "0"
+      );
+    } catch {
+      // Ignore storage write issues (private mode/quota/security policy).
+    }
+  }, [isMuted]);
 
   useEffect(() => {
     const onGesture = () => {

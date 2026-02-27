@@ -237,10 +237,16 @@ export default function App() {
         ? Math.max(0, Math.min(1, gameRemainingMoves / GAME_WINDOW_SECONDS))
         : 1;
   const ringDashOffset = PHASE_RING_CIRCUMFERENCE * (1 - ringProgress);
-  const scorelineText =
+  const scorelineDisplay =
     uiRound.state === "BettingOpen"
       ? Math.ceil(bettingRemainingSeconds).toString()
-      : `${(roundState?.alphaScore ?? 0).toString()}:${(roundState?.betaScore ?? 0).toString()}`;
+      : (
+        <>
+          <span className="scoreline-alpha">{(roundState?.alphaScore ?? 0).toString()}</span>
+          <span className="scoreline-separator">:</span>
+          <span className="scoreline-beta">{(roundState?.betaScore ?? 0).toString()}</span>
+        </>
+      );
   const ringTone =
     uiRound.state === "BettingOpen"
       ? "betting"
@@ -837,7 +843,7 @@ export default function App() {
                             strokeDashoffset={ringDashOffset}
                           />
                         </svg>
-                        <div className="scoreline">{scorelineText}</div>
+                        <div className="scoreline">{scorelineDisplay}</div>
                       </div>
                       <span className="round-meta">
                         Round #{roundId?.toString() ?? "-"} · Move {roundState?.moveCount ?? 0}
@@ -869,6 +875,7 @@ export default function App() {
                           variant="tab"
                           active={betChoice === "alpha"}
                           icon="circle"
+                          className="bet-alpha-tab"
                           onClick={() => setBetChoice("alpha")}
                         >
                           Alpha

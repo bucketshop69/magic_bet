@@ -40,6 +40,11 @@ All notable changes to this project are documented in this file.
   - winner crackle/pulse
   - loser boom/shake
   - draw scan/pulse
+- Added branded beta snake head icon asset for web app identity:
+  - `apps/web/public/beta-snake-head.svg`
+- Added in-board micro FX and telemetry:
+  - derived per-board move direction labels (`Up`/`Down`/`Left`/`Right`)
+  - food-consume pop/blast animation on consumed food cells
 
 ### Changed
 
@@ -59,6 +64,13 @@ All notable changes to this project are documented in this file.
   - betting open and game start audio cues
   - eat and elimination cues during active rounds
   - settle-time winner/loser/draw board FX with paired outcome sounds
+- App favicon now uses the beta snake head icon (`/beta-snake-head.svg`).
+- Board visual theming polish:
+  - Alpha identity highlighted in red for board icon and score treatment
+  - Alpha snake body/head accents tuned to match UI identity
+  - Beta food changed to red variant and food rendered at smaller inner-circle size
+- Feed panel layout now uses a fixed viewport-height shell with internal scrolling.
+- Global scrollbar styling now matches the LCD soft-green theme across the app.
 
 ### Fixed
 
@@ -71,6 +83,7 @@ All notable changes to this project are documented in this file.
 - Fixed round winner parsing for Anchor enum/option shapes (`{ some: { alpha } }`) to prevent false `UNKNOWN` result text.
 - Fixed round-result content text generation to gracefully handle unknown/invalid winners without misleading winner labels.
 - Fixed browser autoplay-policy issues for game SFX by priming audio only after user gesture before playback.
+- Fixed SFX mute UX by persisting mute/unmute preference in `localStorage` across reloads.
 
 ### Validation
 

@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased] - 2026-02-27
+
+### Docs
+
+- Rewrote `README.md` from scratch — now covers full project vision, architecture diagram, tech stack, on-chain program (PDAs + instructions), project structure, getting started guide, round lifecycle, WebSocket events, game engine, documentation index, and roadmap.
+- Updated README tagline to "Two AIs play snake. You bet for the winner."
+- Removed Alpha/Beta strategy attribute table from README, `docs/MAGIC_BET_PRD.md`, and `docs/prds/003/003_game_logic.md` — both AIs now share the same core attributes after game balancing.
+- Moved "Blinks / bet from a tweet" from tagline to Roadmap row where it belongs (planned feature).
+- Updated README roadmap — milestones 5 (UI/UX polish), 8 (Expo mobile app), and 9 (game fairness simulation) marked as Done.
+- Rewrote `docs/prds/008/008_tapestry.md` with full scoped integration plan:
+  - Architecture diagram showing frontend vs crank responsibilities.
+  - Explicit layer split: on-chain = source of truth, Tapestry = social layer only.
+  - 11 API calls documented with endpoint, trigger, caller, and exact request payload.
+  - Indexer bridge design — crank publishes bet and round result events to Tapestry after on-chain confirmation.
+  - Implementation order and failure handling policy (Tapestry errors never block round lifecycle).
+  - Out-of-scope items called out explicitly (no comments, no likes, no Tapestry leaderboard).
+
+---
+
 ## [Unreleased] - 2026-02-25
 
 ### Added

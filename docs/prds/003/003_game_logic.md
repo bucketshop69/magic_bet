@@ -38,26 +38,10 @@ Each snake has:
 
 ## AI Strategies
 
-### Alpha — Aggressive
+Both AIs are fully on-chain, deterministic, and transparent. After game balancing, both agents share the same core move attributes.
 
-```
-1. Find nearest food
-2. Calculate shortest path
-3. Move in that direction
-4. If blocked → turn right
-5. If still blocked → turn left
-6. If all blocked → die
-```
-
-### Beta — Defensive
-
-```
-1. Check all 4 directions
-2. Eliminate directions that hit wall or own tail
-3. From safe directions → pick one with most open space
-4. If no safe direction → move toward food (last resort)
-5. If all blocked → die
-```
+- **Alpha** 🔵 — On-chain snake AI
+- **Beta** 🟠 — On-chain snake AI
 
 ---
 

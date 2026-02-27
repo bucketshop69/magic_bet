@@ -48,10 +48,10 @@ MagicBlock's ER fixes speed and cost. Tapestry fixes social. Magic Bet is the fi
 
 Two AI agents, both with fully public on-chain code. Players can read exactly how each one makes decisions before betting:
 
-- **AI Alpha** — aggressive strategy. Always moves toward the nearest food. High risk, high score potential, dies faster.
-- **AI Beta** — defensive strategy. Prioritizes avoiding walls and its own tail. Lower score ceiling, survives longer.
+- **AI Alpha** 🔵 — One of two snake AIs battling on-chain.
+- **AI Beta** 🟠 — One of two snake AIs battling on-chain.
 
-The tension between strategies is what makes betting interesting. Neither AI always wins.
+Neither AI always wins — that's what makes betting interesting.
 
 ### 4.2 Game Loop
 
@@ -235,28 +235,15 @@ The main game screen — where 80% of time is spent.
 
 Both AI strategies are implemented directly in the Anchor program. Fully transparent, fully deterministic, no off-chain computation.
 
-### Alpha — Aggressive
+### Alpha
 
-```
-1. Find nearest food on board
-2. Calculate shortest path to food
-3. Move in that direction
-4. If blocked, turn right
-5. If still blocked, turn left
-6. If all blocked, die
-```
+Fully on-chain, deterministic move logic.
 
-### Beta — Defensive
+### Beta
 
-```
-1. Check all 4 directions
-2. Eliminate any direction that leads to wall or own tail
-3. From safe directions, pick the one with most open space
-4. If no safe direction exists, move toward food as last resort
-5. If all blocked, die
-```
+Fully on-chain, deterministic move logic.
 
-Winner is determined by: survival first (alive wins over dead), then score (food collected), then move count (survived longer).
+Both AIs share the same core attributes after game balancing. Winner is determined by: survival first (alive wins over dead), then score (food collected), then move count (survived longer).
 
 ---
 

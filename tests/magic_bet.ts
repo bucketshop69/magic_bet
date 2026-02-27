@@ -1,441 +1,624 @@
 import * as anchor from "@coral-xyz/anchor";
-import { AnchorError, BN, Program } from "@coral-xyz/anchor";
+import { AnchorError, BN, Program, web3 } from "@coral-xyz/anchor";
 import { expect } from "chai";
-import { LAMPORTS_PER_SOL, sendAndConfirmTransaction } from "@solana/web3.js";
 import {
-  ConnectionMagicRouter,
   GetCommitmentSignature,
   MAGIC_CONTEXT_ID,
   MAGIC_PROGRAM_ID,
 } from "@magicblock-labs/ephemeral-rollups-sdk";
 import { MagicBet } from "../target/types/magic_bet";
 
-describe("magic_bet", () => {
+const DEFAULT_ER_VALIDATOR = "MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57";
+const LOCAL_VALIDATOR = "mAGicPQYBMvcYveUZA5F5UNNwyHvfYh5xkLS2Fr1mev";
+
+const CONFIG_SEED = "config_v2";
+const HOUSE_SEED = "house_v2";
+const ROUND_SEED = "round_v2";
+const VAULT_SEED = "vault_v2";
+const BET_SEED = "bet_v2";
+
+const MIN_BET = new BN(10_000_000); // 0.01 SOL
+const BET_ALPHA = new BN(20_000_000); // 0.02 SOL
+const BET_BETA = new BN(30_000_000); // 0.03 SOL
+const INITIAL_HOUSE_FUND = new BN(3_000_000_000); // 3 SOL
+const HOUSE_MIN_BALANCE = 3_000_000_000;
+
+const enumKey = (value: unknown): string | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const keys = Object.keys(value as Record<string, unknown>);
+  return keys.length > 0 ? keys[0] : null;
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe("magic_bet full integration", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
+
+  const workspace = anchor.workspace as Record<string, Program<MagicBet>>;
+  const program = workspace.magicBet ?? workspace.MagicBet;
+
+  const adminWallet = provider.wallet as anchor.Wallet;
+
+  const erConnection = new web3.Connection(
+    process.env.EPHEMERAL_PROVIDER_ENDPOINT || "https://devnet-as.magicblock.app/",
+    {
+      wsEndpoint:
+        process.env.EPHEMERAL_WS_ENDPOINT || "wss://devnet-as.magicblock.app/",
+    }
+  );
+  const erProvider = new anchor.AnchorProvider(erConnection, provider.wallet, {
+    commitment: "confirmed",
+  });
+  const erProgram = new Program<MagicBet>(program.idl as MagicBet, erProvider);
+
   const isLocalnet =
     provider.connection.rpcEndpoint.includes("localhost") ||
     provider.connection.rpcEndpoint.includes("127.0.0.1");
-  const ER_VALIDATOR = new anchor.web3.PublicKey(
-    "MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57"
-  );
-  const connectionMagic = new ConnectionMagicRouter(
-    process.env.ROUTER_ENDPOINT || "https://devnet-router.magicblock.app/",
-    {
-      wsEndpoint:
-        process.env.WS_ROUTER_ENDPOINT || "wss://devnet-router.magicblock.app/",
-    }
-  );
-  const providerMagic = new anchor.AnchorProvider(
-    connectionMagic,
-    anchor.Wallet.local()
-  );
-  const localOnly = isLocalnet ? it : it.skip;
   const erOnly = isLocalnet ? it.skip : it;
+  let erValidator: web3.PublicKey | null = null;
 
-  const program = anchor.workspace.magicBet as Program<MagicBet>;
-  const systemProgram = anchor.web3.SystemProgram.programId;
-  const [configPda, configBump] = anchor.web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("config")],
+  const [configPda] = web3.PublicKey.findProgramAddressSync(
+    [Buffer.from(CONFIG_SEED)],
     program.programId
   );
-  const [housePda] = anchor.web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("house")],
+  const [housePda] = web3.PublicKey.findProgramAddressSync(
+    [Buffer.from(HOUSE_SEED)],
     program.programId
   );
-  const PRICE_UPDATE_ACCOUNT = new anchor.web3.PublicKey(
-    process.env.PRICE_UPDATE_ACCOUNT || "ENYwebBThHzmzwPLAQvCucUTsjyfBSZdD9ViXksS4jPu"
-  );
-  const initialHouseFund = new BN(1_000_000_000);
 
-  const roundSeed = (roundId: BN) => roundId.toArrayLike(Buffer, "le", 8);
   const roundPda = (roundId: BN) =>
-    anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("round"), roundSeed(roundId)],
+    web3.PublicKey.findProgramAddressSync(
+      [Buffer.from(ROUND_SEED), roundId.toArrayLike(Buffer, "le", 8)],
       program.programId
     )[0];
+
   const vaultPda = (roundId: BN) =>
-    anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("vault"), roundSeed(roundId)],
-      program.programId
-    )[0];
-  const betPda = (roundId: BN, user: anchor.web3.PublicKey) =>
-    anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("bet"), roundSeed(roundId), user.toBuffer()],
+    web3.PublicKey.findProgramAddressSync(
+      [Buffer.from(VAULT_SEED), roundId.toArrayLike(Buffer, "le", 8)],
       program.programId
     )[0];
 
-  const isVariant = (value: object, variant: string) =>
-    Object.prototype.hasOwnProperty.call(value, variant);
+  const betPda = (roundId: BN, user: web3.PublicKey) =>
+    web3.PublicKey.findProgramAddressSync(
+      [
+        Buffer.from(BET_SEED),
+        roundId.toArrayLike(Buffer, "le", 8),
+        user.toBuffer(),
+      ],
+      program.programId
+    )[0];
 
-  const expectCustomError = async (
-    operation: Promise<unknown>,
-    expectedCode: number
+  const parseErrorCode = (error: unknown): number | undefined => {
+    const anyErr = error as any;
+    const direct =
+      anyErr?.error?.errorCode?.number ??
+      anyErr?.errorCode?.number ??
+      anyErr?.error?.error?.errorCode?.number ??
+      anyErr?.transactionError?.errorCode?.number;
+    if (typeof direct === "number") {
+      return direct;
+    }
+
+    const logs =
+      anyErr?.logs ??
+      anyErr?.transactionLogs ??
+      anyErr?.error?.logs ??
+      anyErr?.transactionError?.logs;
+    if (Array.isArray(logs)) {
+      const parsed = AnchorError.parse(logs);
+      const fromAnchor = parsed?.error?.errorCode?.number;
+      if (typeof fromAnchor === "number") {
+        return fromAnchor;
+      }
+      const logLine = logs.find((line: string) =>
+        line.includes("custom program error: 0x")
+      );
+      if (logLine) {
+        const hex = logLine.match(/0x([0-9a-f]+)/i)?.[1];
+        if (hex) {
+          return parseInt(hex, 16);
+        }
+      }
+      const numberLine = logs.find((line: string) =>
+        /Error Number:\s*\d+/i.test(line)
+      );
+      if (numberLine) {
+        const code = numberLine.match(/Error Number:\s*(\d+)/i)?.[1];
+        if (code) {
+          return Number(code);
+        }
+      }
+    }
+
+    const message =
+      anyErr?.transactionMessage ??
+      anyErr?.transactionError?.message ??
+      anyErr?.message ??
+      anyErr?.error?.message ??
+      anyErr?.toString?.();
+    if (typeof message === "string") {
+      const decimal = message.match(/Error Number:\s*(\d+)/i)?.[1];
+      if (decimal) {
+        return Number(decimal);
+      }
+      const hex = message.match(/custom program error:\s*0x([0-9a-f]+)/i)?.[1];
+      if (hex) {
+        return parseInt(hex, 16);
+      }
+    }
+
+    return undefined;
+  };
+
+  const expectCode = async (
+    action: () => Promise<unknown>,
+    expectedCode: number,
+    label: string
   ) => {
     try {
-      await operation;
-      expect.fail(`Expected custom error code ${expectedCode}, but call succeeded`);
+      await action();
+      expect.fail(`${label}: expected error code ${expectedCode}`);
     } catch (error) {
-      const parsed = AnchorError.parse((error as any)?.logs ?? []);
-      const code =
-        parsed?.error?.errorCode?.number ??
-        (error as any)?.error?.errorCode?.number ??
-        (error as any)?.errorCode?.number;
-      expect(code).to.equal(expectedCode);
+      let actual = parseErrorCode(error);
+      const maybeGetLogs = (error as any)?.getLogs;
+      if (actual === undefined && typeof maybeGetLogs === "function") {
+        try {
+          const l1Logs = await maybeGetLogs.call(error, provider.connection);
+          actual = parseErrorCode({ logs: l1Logs });
+        } catch {
+          // try ER connection below
+        }
+        if (actual === undefined) {
+          try {
+            const erLogs = await maybeGetLogs.call(error, erProvider.connection);
+            actual = parseErrorCode({ logs: erLogs });
+          } catch {
+            // leave undefined and fail assertion with clear label
+          }
+        }
+      }
+      expect(actual, `${label}: unexpected error code`).to.equal(expectedCode);
     }
   };
 
-  const airdrop = async (pubkey: anchor.web3.PublicKey, lamports: number) => {
-    const sig = await provider.connection.requestAirdrop(pubkey, lamports);
-    const latest = await provider.connection.getLatestBlockhash();
-    await provider.connection.confirmTransaction(
-      {
-        signature: sig,
-        blockhash: latest.blockhash,
-        lastValidBlockHeight: latest.lastValidBlockHeight,
-      },
-      "confirmed"
+  const ensureWalletBalance = async (pubkey: web3.PublicKey, minLamports: number) => {
+    const current = await provider.connection.getBalance(pubkey, "confirmed");
+    if (current >= minLamports) {
+      return;
+    }
+
+    const topUp = minLamports - current;
+    const tx = new web3.Transaction().add(
+      web3.SystemProgram.transfer({
+        fromPubkey: adminWallet.publicKey,
+        toPubkey: pubkey,
+        lamports: topUp,
+      })
     );
+    await provider.sendAndConfirm(tx, []);
   };
 
-  const ensureInitialized = async (fundAmount: BN = initialHouseFund) => {
-    const info = await provider.connection.getAccountInfo(configPda);
-    if (!info) {
+  const ensureInitialized = async () => {
+    const accountInfo = await provider.connection.getAccountInfo(configPda, "confirmed");
+    if (!accountInfo) {
       await program.methods
-        .initialize(fundAmount)
+        .initialize(INITIAL_HOUSE_FUND)
         .accountsPartial({
-          signer: provider.wallet.publicKey,
+          admin: adminWallet.publicKey,
           config: configPda,
           house: housePda,
-          systemProgram,
+          systemProgram: web3.SystemProgram.programId,
         })
         .rpc();
-      return true;
     }
-    return false;
-  };
-
-  const createRound = async (roundId: BN, duration: BN) => {
-    await program.methods
-      .createRound(roundId, duration)
-      .accountsPartial({
-        signer: provider.wallet.publicKey,
-        round: roundPda(roundId),
-        priceUpdate: PRICE_UPDATE_ACCOUNT,
-        systemProgram,
-      })
-      .rpc();
-  };
-
-  const placeBet = async (
-    roundId: BN,
-    bettor: anchor.web3.Keypair,
-    amount: BN,
-    direction: { up: {} } | { down: {} }
-  ) => {
-    const bet = betPda(roundId, bettor.publicKey);
-    const round = roundPda(roundId);
-    const vault = vaultPda(roundId);
-    await program.methods
-      .placeBet(roundId, amount, direction)
-      .accountsPartial({
-        signer: bettor.publicKey,
-        bet,
-        round,
-        vault,
-        systemProgram,
-      })
-      .signers([bettor])
-      .rpc();
-    return { bet, round, vault };
-  };
-
-  const closeBetting = async (
-    roundId: BN,
-    signer: anchor.web3.PublicKey = provider.wallet.publicKey
-  ) => {
-    await program.methods
-      .closeBetting(roundId)
-      .accountsPartial({
-        signer,
-        config: configPda,
-        round: roundPda(roundId),
-      })
-      .rpc();
-  };
-
-  const getValidatorOrFallback = async () => {
-    const timeoutMs = 15000;
-    try {
-      const closest = (await Promise.race([
-        connectionMagic.getClosestValidator(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("getClosestValidator timeout")), timeoutMs)
-        ),
-      ])) as { identity: string; fqdn?: string };
-      return {
-        validator: new anchor.web3.PublicKey(closest.identity),
-        closest,
-      };
-    } catch (error) {
-      console.warn(
-        "Falling back to static ER validator because getClosestValidator failed:",
-        (error as Error).message
-      );
-      return { validator: ER_VALIDATOR, closest: undefined as { fqdn?: string } | undefined };
-    }
-  };
-
-  localOnly("initializes config and funds the house vault", async () => {
-    const houseBefore = await provider.connection.getBalance(housePda);
-    const initializedNow = await ensureInitialized();
 
     const config = await program.account.config.fetch(configPda);
-    expect(config.admin.equals(provider.wallet.publicKey)).to.equal(true);
-    expect(config.bump).to.equal(configBump);
+    expect(config.admin.equals(adminWallet.publicKey)).to.equal(true);
+    return config;
+  };
 
-    if (initializedNow) {
-      const houseAfter = await provider.connection.getBalance(housePda);
-      expect(houseAfter - houseBefore).to.equal(initialHouseFund.toNumber());
+  const ensureAgentDelegation = async () => {
+    const config = await program.account.config.fetch(configPda);
+    const currentAgent = config.agent as web3.PublicKey | null;
+    if (!currentAgent || !currentAgent.equals(adminWallet.publicKey)) {
+      await program.methods
+        .delegateAdmin(adminWallet.publicKey)
+        .accountsPartial({
+          config: configPda,
+          admin: adminWallet.publicKey,
+        })
+        .rpc();
     }
-  });
+  };
 
-  localOnly("creates a round with active status", async () => {
-    await ensureInitialized();
-    const roundId = new BN(1001);
-    const duration = new BN(120);
-    const round = roundPda(roundId);
+  const ensureHouseBalance = async (minLamports: number) => {
+    const current = await provider.connection.getBalance(housePda, "confirmed");
+    if (current >= minLamports) {
+      return;
+    }
 
-    await createRound(roundId, duration);
-    const roundAccount = await program.account.round.fetch(round);
-
-    expect(roundAccount.roundId.eq(roundId)).to.equal(true);
-    expect(roundAccount.duration.eq(duration)).to.equal(true);
-    expect(roundAccount.upPool.toNumber()).to.equal(0);
-    expect(roundAccount.downPool.toNumber()).to.equal(0);
-    expect(isVariant(roundAccount.status, "active")).to.equal(true);
-  });
-
-  localOnly("places an up bet and updates bet + pool state", async () => {
-    await ensureInitialized();
-    const roundId = new BN(1002);
-    const duration = new BN(300);
-    await createRound(roundId, duration);
-
-    const bettor = anchor.web3.Keypair.generate();
-    await airdrop(bettor.publicKey, anchor.web3.LAMPORTS_PER_SOL);
-
-    const amount = new BN(200_000_000);
-    const vaultBefore = await provider.connection.getBalance(vaultPda(roundId));
-    const result = await placeBet(roundId, bettor, amount, { up: {} });
-
-    const vaultAfter = await provider.connection.getBalance(result.vault);
-    const betAccount = await program.account.bet.fetch(result.bet);
-    const roundAccount = await program.account.round.fetch(result.round);
-
-    expect(vaultAfter - vaultBefore).to.equal(amount.toNumber());
-    expect(betAccount.user.equals(bettor.publicKey)).to.equal(true);
-    expect(betAccount.roundId.eq(roundId)).to.equal(true);
-    expect(betAccount.amount.eq(amount)).to.equal(true);
-    expect(isVariant(betAccount.direction, "up")).to.equal(true);
-    expect(betAccount.isClaimed).to.equal(false);
-    expect(roundAccount.upPool.eq(amount)).to.equal(true);
-    expect(roundAccount.downPool.toNumber()).to.equal(0);
-  });
-
-  localOnly("rejects settle_round from non-admin signer", async () => {
-    await ensureInitialized();
-    const roundId = new BN(1003);
-    const duration = new BN(120);
-    await createRound(roundId, duration);
-
-    const attacker = anchor.web3.Keypair.generate();
-    await airdrop(attacker.publicKey, anchor.web3.LAMPORTS_PER_SOL);
-
-    await expectCustomError(
-      program.methods
-        .settleRound(roundId, new BN(123))
-        .accountsPartial({
-          signer: attacker.publicKey,
-          config: configPda,
-          round: roundPda(roundId),
-          systemProgram,
-        })
-        .signers([attacker])
-        .rpc(),
-      6001
-    );
-  });
-
-  localOnly("rejects settle_round when round is still active", async () => {
-    await ensureInitialized();
-    const roundId = new BN(1004);
-    const duration = new BN(120);
-    await createRound(roundId, duration);
-
-    await expectCustomError(
-      program.methods
-        .settleRound(roundId, new BN(456))
-        .accountsPartial({
-          signer: provider.wallet.publicKey,
-          config: configPda,
-          round: roundPda(roundId),
-          systemProgram,
-        })
-        .rpc(),
-      6002
-    );
-  });
-
-  localOnly("closes betting and moves round status to inProgress", async () => {
-    await ensureInitialized();
-    const roundId = new BN(1006);
-    const duration = new BN(90);
-    const round = roundPda(roundId);
-    await createRound(roundId, duration);
-
-    await closeBetting(roundId);
-    const roundAccount = await program.account.round.fetch(round);
-    expect(isVariant(roundAccount.status, "inProgress")).to.equal(true);
-  });
-
-  localOnly("rejects claim_winnings before the round is settled", async () => {
-    await ensureInitialized();
-    const roundId = new BN(1005);
-    const duration = new BN(180);
-    await createRound(roundId, duration);
-
-    const bettor = anchor.web3.Keypair.generate();
-    await airdrop(bettor.publicKey, anchor.web3.LAMPORTS_PER_SOL);
-
-    const result = await placeBet(roundId, bettor, new BN(100_000_000), {
-      down: {},
-    });
-
-    await expectCustomError(
-      program.methods
-        .claimWinnings(roundId)
-        .accountsPartial({
-          signer: bettor.publicKey,
-          bet: result.bet,
-          round: result.round,
-          house: housePda,
-          systemProgram,
-        })
-        .signers([bettor])
-        .rpc(),
-      6003
-    );
-  });
-
-  erOnly("runs devnet ER flow (init/create/delegate/place/settle+undelegate/claim)", async function () {
-    this.timeout(300000);
-
-    const payer = providerMagic.wallet;
-    const roundId = new BN(Date.now());
-    const duration = new BN(120);
-    const amount = new BN(1_000_000);
-
-    const round = roundPda(roundId);
-    const bet = betPda(roundId, payer.publicKey);
-    const vault = vaultPda(roundId);
-
-    console.log("ER step: checking payer balance");
-    const payerBalance = await provider.connection.getBalance(payer.publicKey);
-    expect(
-      payerBalance,
-      "Local wallet has no SOL on devnet. Fund ~/.config/solana/id.json before running ER tests."
-    ).to.be.greaterThan(0.01 * LAMPORTS_PER_SOL);
-
-    console.log("ER step: initialize + create round on base layer");
-    await ensureInitialized();
-    await createRound(roundId, duration);
-
-    console.log("ER step: select validator and delegate round");
-    const { validator, closest } = await getValidatorOrFallback();
-
-    const delegateTx = await program.methods
-      .delegateRound()
+    const delta = new BN(minLamports - current);
+    await program.methods
+      .fundHouse(delta)
       .accountsPartial({
-        payer: payer.publicKey,
-        validator,
-        pda: round,
+        signer: adminWallet.publicKey,
+        config: configPda,
+        house: housePda,
+        systemProgram: web3.SystemProgram.programId,
       })
-      .transaction();
-    await sendAndConfirmTransaction(provider.connection, delegateTx, [payer.payer], {
-      skipPreflight: true,
-      commitment: "confirmed",
-    });
+      .rpc();
+  };
 
-    console.log("ER step: place bet on ER");
-    const placeBetTx = await program.methods
-      .placeBet(roundId, amount, { up: {} })
+  const nextRoundId = async (): Promise<BN> => {
+    const config = await program.account.config.fetch(configPda);
+    return new BN(config.roundId.toString());
+  };
+
+  const resolveErValidator = async (): Promise<web3.PublicKey> => {
+    if (erValidator) {
+      return erValidator;
+    }
+
+    if (isLocalnet) {
+      erValidator = new web3.PublicKey(LOCAL_VALIDATOR);
+      return erValidator;
+    }
+
+    const envValidator = process.env.ER_VALIDATOR?.trim();
+    if (envValidator) {
+      try {
+        erValidator = new web3.PublicKey(envValidator);
+        return erValidator;
+      } catch {
+        // fall through to static default
+      }
+    }
+
+    erValidator = new web3.PublicKey(DEFAULT_ER_VALIDATOR);
+    return erValidator;
+  };
+
+  const createRound = async (roundId: BN, durationSeconds: number) => {
+    await program.methods
+      .createRound(roundId, new BN(durationSeconds))
       .accountsPartial({
-        signer: payer.publicKey,
-        bet,
-        round,
-        vault,
-        systemProgram,
+        signer: adminWallet.publicKey,
+        config: configPda,
+        round: roundPda(roundId),
+        vault: vaultPda(roundId),
+        systemProgram: web3.SystemProgram.programId,
       })
-      .transaction();
-    const erPlaceSig = await sendAndConfirmTransaction(
-      connectionMagic,
-      placeBetTx,
-      [payer.payer],
-      { skipPreflight: true, commitment: "confirmed" }
-    );
-    console.log("ER place_bet signature:", erPlaceSig);
+      .rpc();
+  };
 
-    console.log("ER step: close betting on ER");
-    const closeBettingTx = await program.methods
+  const delegateRound = async (roundId: BN) => {
+    const validator = await resolveErValidator();
+    await program.methods
+      .delegateRound(roundId)
+      .accountsPartial({
+        signer: adminWallet.publicKey,
+        config: configPda,
+        round: roundPda(roundId),
+        roundPda: roundPda(roundId),
+      })
+      .remainingAccounts([
+        {
+          pubkey: validator,
+          isSigner: false,
+          isWritable: false,
+        },
+      ])
+      .rpc();
+
+    // give delegation metadata a moment to propagate before ER calls
+    await sleep(1500);
+  };
+
+  const placeBetL1 = async (
+    roundId: BN,
+    user: web3.PublicKey,
+    amount: BN,
+    choice: { alpha: {} } | { beta: {} } | { draw: {} },
+    signer?: web3.Keypair
+  ) => {
+    const method = program.methods
+      .placeBet(roundId, choice, amount)
+      .accountsPartial({
+        user,
+        config: configPda,
+        round: roundPda(roundId),
+        vault: vaultPda(roundId),
+        bet: betPda(roundId, user),
+        house: housePda,
+        systemProgram: web3.SystemProgram.programId,
+      });
+
+    if (signer) {
+      return method.signers([signer]).rpc();
+    }
+    return method.rpc();
+  };
+
+  const closeBettingL1 = async (roundId: BN) => {
+    await program.methods
       .closeBetting(roundId)
       .accountsPartial({
-        signer: payer.publicKey,
+        signer: adminWallet.publicKey,
         config: configPda,
-        round,
+        round: roundPda(roundId),
       })
-      .transaction();
-    const closeSig = await sendAndConfirmTransaction(connectionMagic, closeBettingTx, [payer.payer], {
-      skipPreflight: true,
-      commitment: "confirmed",
-    });
-    console.log("ER close_betting signature:", closeSig);
+      .rpc();
+  };
 
-    console.log("ER step: settle + undelegate on ER");
-    const settleTx = await program.methods
+  const executeMovesEr = async (roundId: BN, maxMoves = 100) => {
+    for (let i = 0; i < maxMoves; i += 1) {
+      await erProgram.methods
+        .executeMove(roundId)
+        .accountsPartial({
+          signer: adminWallet.publicKey,
+          config: configPda,
+          round: roundPda(roundId),
+        })
+        .rpc();
+
+      if (i % 5 === 4) {
+        const roundState = await erProgram.account.round.fetch(roundPda(roundId));
+        if (roundState.winner) {
+          return;
+        }
+      }
+    }
+  };
+
+  const settleEr = async (roundId: BN) => {
+    const signature = await erProgram.methods
       .settleAndUndelegate(roundId)
       .accountsPartial({
-        payer: payer.publicKey,
+        payer: adminWallet.publicKey,
         config: configPda,
-        round,
-        priceUpdate: PRICE_UPDATE_ACCOUNT,
-        magicContext: MAGIC_CONTEXT_ID,
+        round: roundPda(roundId),
         magicProgram: MAGIC_PROGRAM_ID,
+        magicContext: MAGIC_CONTEXT_ID,
       })
-      .transaction();
+      .rpc();
 
-    const settleSig = await sendAndConfirmTransaction(connectionMagic, settleTx, [payer.payer], {
-      skipPreflight: true,
-    });
+    return signature;
+  };
 
-    console.log("ER step: wait for base-layer commitment signature");
-    const commitmentConnection = new anchor.web3.Connection(
-      closest?.fqdn ?? connectionMagic.rpcEndpoint
-    );
-    const baseLayerCommitSig = await GetCommitmentSignature(settleSig, commitmentConnection);
-    console.log("Base-layer commit/undelegate signature:", baseLayerCommitSig);
+  const waitForSettledL1 = async (roundId: BN, settleSignature?: string) => {
+    if (settleSignature) {
+      try {
+        await GetCommitmentSignature(
+          settleSignature,
+          new web3.Connection("https://devnet-as.magicblock.app/")
+        );
+      } catch {
+        // fall back to polling below
+      }
+    }
 
-    console.log("ER step: claim winnings on base layer");
-    await program.methods
+    for (let i = 0; i < 30; i += 1) {
+      const state = await program.account.round.fetch(roundPda(roundId));
+      if (enumKey(state.status) === "settled") {
+        return state;
+      }
+      await sleep(1000);
+    }
+
+    throw new Error(`Round ${roundId.toString()} did not reach Settled on L1`);
+  };
+
+  const claimAs = async (roundId: BN, user: web3.PublicKey, signer?: web3.Keypair) => {
+    const method = program.methods
       .claimWinnings(roundId)
       .accountsPartial({
-        signer: payer.publicKey,
-        bet,
-        round,
+        user,
+        config: configPda,
+        round: roundPda(roundId),
+        bet: betPda(roundId, user),
         house: housePda,
-        systemProgram,
+        vault: vaultPda(roundId),
+        systemProgram: web3.SystemProgram.programId,
+      });
+
+    if (signer) {
+      return method.signers([signer]).rpc();
+    }
+    return method.rpc();
+  };
+
+  const closeBetByAgent = async (roundId: BN, user: web3.PublicKey) => {
+    await program.methods
+      .closeBet(roundId, user)
+      .accountsPartial({
+        signer: adminWallet.publicKey,
+        round: roundPda(roundId),
+        bet: betPda(roundId, user),
+        userAccount: user,
       })
-      .signers([payer.payer])
       .rpc();
+  };
+
+  const sweepVaultByAgent = async (roundId: BN) => {
+    await program.methods
+      .sweepVault(roundId)
+      .accountsPartial({
+        signer: adminWallet.publicKey,
+        config: configPda,
+        round: roundPda(roundId),
+        house: housePda,
+        vault: vaultPda(roundId),
+      })
+      .rpc();
+  };
+
+  before(async function () {
+    this.timeout(120000);
+    await ensureWalletBalance(adminWallet.publicKey, 1_000_000_000);
+    await ensureInitialized();
+    await ensureAgentDelegation();
+    await ensureHouseBalance(HOUSE_MIN_BALANCE);
+  });
+
+  it("loads workspace and exposes final instruction set", () => {
+    expect(program).to.not.equal(undefined);
+
+    const normalize = (value: string) => value.replace(/_/g, "").toLowerCase();
+    const instructionNames = program.idl.instructions.map((ix) => normalize(ix.name));
+    expect(instructionNames).to.include.members([
+      normalize("initialize"),
+      normalize("delegateAdmin"),
+      normalize("createRound"),
+      normalize("delegateRound"),
+      normalize("placeBet"),
+      normalize("closeBetting"),
+      normalize("executeMove"),
+      normalize("settleAndUndelegate"),
+      normalize("claimWinnings"),
+      normalize("closeBet"),
+      normalize("fundHouse"),
+      normalize("sweepVault"),
+    ]);
+  });
+
+  it("rejects delegate_admin from a non-admin signer", async function () {
+    this.timeout(60000);
+
+    const attacker = web3.Keypair.generate();
+    await expectCode(
+      () =>
+        program.methods
+          .delegateAdmin(attacker.publicKey)
+          .accountsPartial({
+            config: configPda,
+            admin: attacker.publicKey,
+          })
+          .signers([attacker])
+          .rpc(),
+      6000,
+      "delegate_admin unauthorized"
+    );
+  });
+
+  erOnly("enforces bet limits, supports top-up, and locks bet choice", async function () {
+    this.timeout(240000);
+
+    const roundId = await nextRoundId();
+
+    await createRound(roundId, 30);
+
+    await expectCode(
+      () => placeBetL1(roundId, adminWallet.publicKey, new BN(1), { alpha: {} }),
+      6008,
+      "min bet"
+    );
+
+    await expectCode(
+      () => placeBetL1(roundId, adminWallet.publicKey, new BN(1_500_000_000), { alpha: {} }),
+      6009,
+      "max bet"
+    );
+
+    await placeBetL1(roundId, adminWallet.publicKey, BET_ALPHA, { alpha: {} });
+    await placeBetL1(roundId, adminWallet.publicKey, BET_BETA, { alpha: {} });
+
+    const bet = await program.account.bet.fetch(betPda(roundId, adminWallet.publicKey));
+    expect(bet.amount.toString()).to.equal(BET_ALPHA.add(BET_BETA).toString());
+
+    await expectCode(
+      () => placeBetL1(roundId, adminWallet.publicKey, MIN_BET, { beta: {} }),
+      6010,
+      "choice immutable"
+    );
+
+    await closeBettingL1(roundId);
+    await delegateRound(roundId);
+    const settleSig = await settleEr(roundId);
+    const settledRound = await waitForSettledL1(roundId, settleSig);
+
+    if (enumKey(settledRound.winner) === "alpha") {
+      await claimAs(roundId, adminWallet.publicKey);
+    }
+
+    await closeBetByAgent(roundId, adminWallet.publicKey);
+    await sweepVaultByAgent(roundId);
+  });
+
+  erOnly("runs full ER flow: create/delegate/bet/move/settle/claim/close/sweep", async function () {
+    this.timeout(360000);
+
+    const bettorBeta = web3.Keypair.generate();
+    await ensureWalletBalance(bettorBeta.publicKey, 200_000_000);
+
+    let nonDrawWinner: "alpha" | "beta" | null = null;
+
+    for (let attempt = 0; attempt < 3 && !nonDrawWinner; attempt += 1) {
+      const roundId = await nextRoundId();
+
+      await createRound(roundId, 45);
+
+      await placeBetL1(roundId, adminWallet.publicKey, BET_ALPHA, { alpha: {} });
+      await placeBetL1(
+        roundId,
+        bettorBeta.publicKey,
+        BET_BETA,
+        { beta: {} },
+        bettorBeta
+      );
+
+      await closeBettingL1(roundId);
+      await delegateRound(roundId);
+      await executeMovesEr(roundId, 120);
+
+      const settleSig = await settleEr(roundId);
+      const settledRound = await waitForSettledL1(roundId, settleSig);
+      const winner = enumKey(settledRound.winner);
+
+      if (winner === "draw") {
+        await expectCode(
+          () => claimAs(roundId, adminWallet.publicKey),
+          6014,
+          "draw claim blocked"
+        );
+
+        await closeBetByAgent(roundId, adminWallet.publicKey);
+        await closeBetByAgent(roundId, bettorBeta.publicKey);
+        await sweepVaultByAgent(roundId);
+        continue;
+      }
+
+      expect(winner === "alpha" || winner === "beta").to.equal(true);
+      nonDrawWinner = winner as "alpha" | "beta";
+
+      const winnerPubkey = winner === "alpha" ? adminWallet.publicKey : bettorBeta.publicKey;
+      const winnerSigner = winner === "alpha" ? undefined : bettorBeta;
+      const loserPubkey = winner === "alpha" ? bettorBeta.publicKey : adminWallet.publicKey;
+      const loserSigner = winner === "alpha" ? bettorBeta : undefined;
+
+      await claimAs(roundId, winnerPubkey, winnerSigner);
+      const winnerBet = await program.account.bet.fetch(betPda(roundId, winnerPubkey));
+      expect(winnerBet.claimed).to.equal(true);
+
+      await expectCode(
+        () => claimAs(roundId, loserPubkey, loserSigner),
+        6013,
+        "loser claim blocked"
+      );
+
+      await expectCode(
+        () => claimAs(roundId, winnerPubkey, winnerSigner),
+        6012,
+        "double claim blocked"
+      );
+
+      await closeBetByAgent(roundId, winnerPubkey);
+      await closeBetByAgent(roundId, loserPubkey);
+      await sweepVaultByAgent(roundId);
+    }
+
+    expect(nonDrawWinner, "No non-draw round found across attempts").to.not.equal(null);
   });
 });

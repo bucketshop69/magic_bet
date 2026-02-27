@@ -57,6 +57,7 @@ export default function App() {
   const [betAmountSol, setBetAmountSol] = useState("0.02");
   const [busy, setBusy] = useState<string | null>(null);
   const [events, setEvents] = useState<string[]>([]);
+  const [walletMenuOpen, setWalletMenuOpen] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<number | null>(null);
@@ -64,6 +65,7 @@ export default function App() {
   const shouldReconnectRef = useRef(false);
   const wsGenerationRef = useRef(0);
   const lastRoundRef = useRef<string | null>(null);
+  const walletMenuRef = useRef<HTMLDivElement | null>(null);
 
   const addEvent = (line: string) => {
     setEvents((prev) => [line, ...prev].slice(0, 14));
@@ -161,6 +163,7 @@ export default function App() {
     setProgram(p);
     await refreshBalance(res.publicKey);
     await refreshClaimables(p, res.publicKey);
+    setWalletMenuOpen(false);
     addEvent(`Wallet connected: ${res.publicKey.toBase58()}`);
   }
 
@@ -173,7 +176,33 @@ export default function App() {
     setClaimableRounds([]);
     setSelectedClaimRound("");
     setUserBetRounds([]);
+    setWalletMenuOpen(false);
     addEvent("Wallet disconnected");
+  }
+
+  async function copyWalletAddress() {
+    if (!walletPk) return;
+    const address = walletPk.toBase58();
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(address);
+      } else {
+        const temp = document.createElement("textarea");
+        temp.value = address;
+        temp.setAttribute("readonly", "true");
+        temp.style.position = "absolute";
+        temp.style.left = "-9999px";
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand("copy");
+        document.body.removeChild(temp);
+      }
+      addEvent(`Copied wallet address: ${short(address)}`);
+    } catch (err) {
+      addEvent(`copy address failed: ${(err as Error).message}`);
+    } finally {
+      setWalletMenuOpen(false);
+    }
   }
 
   async function pollCrankStatus() {
@@ -349,6 +378,21 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topic]);
 
+  useEffect(() => {
+    function onPointerDown(event: MouseEvent) {
+      if (!walletMenuOpen) return;
+      const target = event.target as Node | null;
+      if (walletMenuRef.current && target && !walletMenuRef.current.contains(target)) {
+        setWalletMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", onPointerDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+    };
+  }, [walletMenuOpen]);
+
   return (
     <main className="app-shell">
       <section className="rail-grid">
@@ -385,14 +429,14 @@ export default function App() {
 
           <section className="boards">
             <SnakeBoard
+              side="alpha"
               title="Alpha"
-              score={roundState?.alphaScore ?? 0}
               alive={roundState?.alphaAlive ?? false}
               board={roundState?.alphaBoard ?? EMPTY_BOARD}
             />
             <SnakeBoard
+              side="beta"
               title="Beta"
-              score={roundState?.betaScore ?? 0}
               alive={roundState?.betaAlive ?? false}
               board={roundState?.betaBoard ?? EMPTY_BOARD}
             />
@@ -404,6 +448,7 @@ export default function App() {
                 <LcdButton
                   variant="tab"
                   active={betChoice === "alpha"}
+                  icon="circle"
                   onClick={() => setBetChoice("alpha")}
                 >
                   Alpha
@@ -411,6 +456,7 @@ export default function App() {
                 <LcdButton
                   variant="tab"
                   active={betChoice === "beta"}
+                  icon="change_history"
                   onClick={() => setBetChoice("beta")}
                 >
                   Beta
@@ -469,18 +515,66 @@ export default function App() {
             </div>
 
             <div className="toolbar">
-              <NavTabButton active>Live</NavTabButton>
-              <NavTabButton>Ranking</NavTabButton>
-              <NavTabButton>History</NavTabButton>
-              {!walletPk ? (
-                <LcdButton variant="primary" onClick={connectWallet}>
-                  Connect Wallet
-                </LcdButton>
-              ) : (
-                <LcdButton variant="secondary" onClick={disconnectWallet}>
-                  Disconnect
-                </LcdButton>
-              )}
+              <div className="toolbar-nav">
+                <NavTabButton active>Live</NavTabButton>
+                <NavTabButton>Ranking</NavTabButton>
+                <NavTabButton>History</NavTabButton>
+              </div>
+              <div className="toolbar-wallet">
+                {!walletPk ? (
+                  <LcdButton
+                    variant="primary"
+                    icon="power_settings_new"
+                    className="toolbar-power-btn"
+                    aria-label="Connect Wallet"
+                    title="Connect Wallet"
+                    onClick={connectWallet}
+                  />
+                ) : (
+                  <div className="wallet-menu-wrap" ref={walletMenuRef}>
+                    <LcdButton
+                      variant="secondary"
+                      icon="account_balance_wallet"
+                      className="wallet-trigger"
+                      aria-label={`Wallet ${short(walletPk.toBase58())}`}
+                      title={walletPk.toBase58()}
+                      onClick={() => setWalletMenuOpen((v) => !v)}
+                    >
+                      {short(walletPk.toBase58())}
+                    </LcdButton>
+                    {walletMenuOpen ? (
+                      <div className="wallet-dropdown" role="menu">
+                        <button
+                          type="button"
+                          className="wallet-menu-item"
+                          onClick={copyWalletAddress}
+                        >
+                          <span
+                            className="material-symbols-outlined wallet-menu-icon"
+                            aria-hidden="true"
+                          >
+                            content_copy
+                          </span>
+                          <span>Copy Address</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="wallet-menu-item"
+                          onClick={disconnectWallet}
+                        >
+                          <span
+                            className="material-symbols-outlined wallet-menu-icon"
+                            aria-hidden="true"
+                          >
+                            logout
+                          </span>
+                          <span>Logout</span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
             </div>
           </Panel>
 

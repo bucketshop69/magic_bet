@@ -2,8 +2,8 @@ import "./SnakeBoard.css";
 import { Panel } from "./ui/Panel";
 
 type Props = {
+  side: "alpha" | "beta";
   title: string;
-  score: number;
   alive: boolean;
   board: number[];
 };
@@ -15,15 +15,20 @@ function classForCell(v: number) {
   return "cell";
 }
 
-export function SnakeBoard({ title, score, alive, board }: Props) {
+export function SnakeBoard({ side, title, alive, board }: Props) {
+  const icon = side === "alpha" ? "circle" : "change_history";
   return (
     <Panel className="board-card">
       <header className="board-header">
-        <h3>{title}</h3>
+        <h3 className="board-title">
+          <span className="material-symbols-outlined board-title-icon" aria-hidden="true">
+            {icon}
+          </span>
+          <span>{title}</span>
+        </h3>
         <div className={`pill ${alive ? "alive" : "dead"}`}>
           {alive ? "Alive" : "Dead"}
         </div>
-        <div className="score">Score: {score}</div>
       </header>
       <div className="grid" role="img" aria-label={`${title} board`}>
         {board.map((cell, i) => (

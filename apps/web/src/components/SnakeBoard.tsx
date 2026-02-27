@@ -1,11 +1,14 @@
 import "./SnakeBoard.css";
 import { Panel } from "./ui/Panel";
 
+export type BoardResultFx = "winner" | "loser" | "draw" | null;
+
 type Props = {
   side: "alpha" | "beta";
   title: string;
   alive: boolean;
   board: number[];
+  resultFx?: BoardResultFx;
 };
 
 function classForCell(v: number) {
@@ -15,10 +18,11 @@ function classForCell(v: number) {
   return "cell";
 }
 
-export function SnakeBoard({ side, title, alive, board }: Props) {
+export function SnakeBoard({ side, title, alive, board, resultFx = null }: Props) {
   const icon = side === "alpha" ? "circle" : "change_history";
+  const fxClass = resultFx ? `board-fx board-fx-${resultFx}` : "";
   return (
-    <Panel className="board-card">
+    <Panel className={`board-card ${fxClass}`.trim()}>
       <header className="board-header">
         <h3 className="board-title">
           <span className="material-symbols-outlined board-title-icon" aria-hidden="true">

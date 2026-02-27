@@ -63,7 +63,9 @@
 }
 
 .cell.food {
-  background: #253625;
+  background:
+    radial-gradient(circle at 35% 35%, #4c654c 0 24%, #253625 25% 100%);
+  border-radius: 50%;
   box-shadow: inset 0 0 0 1px #3f5d3f;
 }
 
@@ -73,6 +75,23 @@
 }
 
 .cell.snake.head {
-  background: #111b11;
+  position: relative;
+  overflow: hidden;
+  border-radius: 28%;
+  background:
+    radial-gradient(circle at 30% 34%, #b6c79f 0 11%, transparent 12%),
+    radial-gradient(circle at 70% 34%, #b6c79f 0 11%, transparent 12%),
+    linear-gradient(160deg, #1e2f1e 0%, #101810 70%);
   box-shadow: inset 0 0 0 1px #4f6d4f;
+}
+
+.cell.snake.head::before {
+  content: "";
+  position: absolute;
+  left: 20%;
+  right: 20%;
+  bottom: 12%;
+  top: 56%;
+  border-radius: 42% 42% 70% 70%;
+  background: rgba(180, 198, 156, 0.2);
 }

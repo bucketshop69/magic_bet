@@ -16,6 +16,13 @@ function asNumber(value: unknown, fallback = 0): number {
   return Number.isFinite(coerced) ? coerced : fallback;
 }
 
+function asNullableNumber(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const coerced = Number(value);
+  return Number.isFinite(coerced) ? coerced : null;
+}
+
 function asBoolean(value: unknown, fallback = false): boolean {
   if (typeof value === "boolean") return value;
   return fallback;
@@ -76,6 +83,8 @@ export function parseCrankStatus(value: unknown): CrankStatus {
           ? null
           : asString(orchestrator.currentRoundId),
       phase: asString(orchestrator?.phase, "UNKNOWN"),
+      bettingDeadlineMs: asNullableNumber(orchestrator?.bettingDeadlineMs),
+      roundCreatedAtMs: asNullableNumber(orchestrator?.roundCreatedAtMs),
     },
     ws: {
       clients: asNumber(ws?.clients),

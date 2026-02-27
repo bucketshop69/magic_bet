@@ -31,6 +31,16 @@ import type { CrankStatus } from "./types/contracts";
 import type { RoundStateV1, WsEvent } from "./types/ws";
 
 const EMPTY_BOARD = new Array(400).fill(0);
+const BETTING_WINDOW_FALLBACK_SECONDS = 45;
+const GAME_WINDOW_SECONDS = 300;
+const PHASE_RING_RADIUS = 44;
+const PHASE_RING_CIRCUMFERENCE = 2 * Math.PI * PHASE_RING_RADIUS;
+
+type PhaseClock = {
+  kind: "betting" | "game";
+  roundId: string;
+  startedAtMs: number;
+};
 
 function short(pk?: string) {
   if (!pk) return "-";
@@ -43,6 +53,30 @@ function winnerKey(value: unknown): "alpha" | "beta" | "draw" | null {
   if (keys.length === 0) return null;
   const k = keys[0]?.toLowerCase();
   if (k === "alpha" || k === "beta" || k === "draw") return k;
+  return null;
+}
+
+function normalizeEpochMs(ts: number): number {
+  if (!Number.isFinite(ts) || ts <= 0) return Date.now();
+  return ts >= 1_000_000_000_000 ? ts : ts * 1000;
+}
+
+function derivePhaseClockFromRoundState(state: RoundStateV1): PhaseClock | null {
+  const roundId = state.roundId;
+  if (state.status === "Active") {
+    return {
+      kind: "betting",
+      roundId,
+      startedAtMs: normalizeEpochMs(state.ts),
+    };
+  }
+  if (state.status === "InProgress") {
+    return {
+      kind: "game",
+      roundId,
+      startedAtMs: normalizeEpochMs(state.ts) - Math.max(0, state.moveCount) * 1000,
+    };
+  }
   return null;
 }
 
@@ -75,6 +109,8 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [events, setEvents] = useState<string[]>([]);
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
+  const [phaseClock, setPhaseClock] = useState<PhaseClock | null>(null);
+  const [clockNowMs, setClockNowMs] = useState(() => Date.now());
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<number | null>(null);
@@ -97,7 +133,7 @@ export default function App() {
   const currentRoundId = roundId?.toString() ?? null;
   const currentRoundClaimable = Boolean(
     currentRoundId &&
-      claimableRounds.some((r) => r.toString() === currentRoundId)
+    claimableRounds.some((r) => r.toString() === currentRoundId)
   );
   const currentRoundHasUserBet = Boolean(
     currentRoundId && userBetRounds.includes(currentRoundId)
@@ -112,6 +148,51 @@ export default function App() {
 
   const canBet = !!walletPk && !busy && uiRound.canPlaceBet;
   const canClaim = !!walletPk && !busy && selectedClaimRound.length > 0;
+  const phaseClockForCurrentRound =
+    phaseClock && currentRoundId && phaseClock.roundId === currentRoundId
+      ? phaseClock
+      : null;
+
+  const bettingDeadlineMs = crankStatus?.orchestrator.bettingDeadlineMs ?? null;
+  const roundCreatedAtMs = crankStatus?.orchestrator.roundCreatedAtMs ?? null;
+  const bettingWindowSeconds =
+    bettingDeadlineMs != null &&
+      roundCreatedAtMs != null &&
+      bettingDeadlineMs > roundCreatedAtMs
+      ? Math.max(1, (bettingDeadlineMs - roundCreatedAtMs) / 1000)
+      : BETTING_WINDOW_FALLBACK_SECONDS;
+  const bettingRemainingSeconds =
+    bettingDeadlineMs != null
+      ? Math.max(0, (bettingDeadlineMs - clockNowMs) / 1000)
+      : phaseClockForCurrentRound
+        ? Math.max(
+          0,
+          bettingWindowSeconds -
+          Math.max(0, (clockNowMs - phaseClockForCurrentRound.startedAtMs) / 1000)
+        )
+        : 0;
+  const gameRemainingMoves = Math.max(
+    0,
+    GAME_WINDOW_SECONDS - Math.max(0, roundState?.moveCount ?? 0)
+  );
+
+  const ringProgress =
+    uiRound.state === "BettingOpen"
+      ? Math.max(0, Math.min(1, bettingRemainingSeconds / bettingWindowSeconds))
+      : uiRound.state === "InProgress"
+        ? Math.max(0, Math.min(1, gameRemainingMoves / GAME_WINDOW_SECONDS))
+        : 1;
+  const ringDashOffset = PHASE_RING_CIRCUMFERENCE * (1 - ringProgress);
+  const scorelineText =
+    uiRound.state === "BettingOpen"
+      ? Math.ceil(bettingRemainingSeconds).toString()
+      : `${(roundState?.alphaScore ?? 0).toString()}:${(roundState?.betaScore ?? 0).toString()}`;
+  const ringTone =
+    uiRound.state === "BettingOpen"
+      ? "betting"
+      : uiRound.state === "InProgress"
+        ? "game"
+        : "idle";
 
   async function refreshClaimables(p: anchor.Program, user: PublicKey) {
     try {
@@ -288,6 +369,23 @@ export default function App() {
       }
 
       if (parsed.type === "round_transition_v1") {
+        if (parsed.to === "BETTING_OPEN") {
+          setPhaseClock({
+            kind: "betting",
+            roundId: parsed.roundId,
+            startedAtMs: normalizeEpochMs(parsed.ts),
+          });
+        } else if (parsed.to === "GAME_LOOP") {
+          setPhaseClock({
+            kind: "game",
+            roundId: parsed.roundId,
+            startedAtMs: normalizeEpochMs(parsed.ts),
+          });
+        } else if (parsed.to === "SETTLE" || parsed.to === "CLEANUP" || parsed.to === "READY") {
+          setPhaseClock((prev) =>
+            prev?.roundId === parsed.roundId ? null : prev
+          );
+        }
         addEvent(
           `Round ${parsed.roundId} transition ${parsed.from} -> ${parsed.to}`
         );
@@ -296,6 +394,23 @@ export default function App() {
 
       if (parsed.type === "snapshot_v1") {
         setRoundState(parsed.roundState);
+        const derivedClock = derivePhaseClockFromRoundState(parsed.roundState);
+        if (derivedClock) {
+          setPhaseClock((prev) => {
+            if (
+              prev &&
+              prev.roundId === derivedClock.roundId &&
+              prev.kind === derivedClock.kind
+            ) {
+              return prev;
+            }
+            return derivedClock;
+          });
+        } else {
+          setPhaseClock((prev) =>
+            prev?.roundId === parsed.roundState.roundId ? null : prev
+          );
+        }
         if (parsed.roundState.status === "Settled" && program && walletPk) {
           refreshClaimables(program, walletPk);
         }
@@ -307,6 +422,23 @@ export default function App() {
 
       if (parsed.type === "round_state_v1") {
         setRoundState(parsed);
+        const derivedClock = derivePhaseClockFromRoundState(parsed);
+        if (derivedClock) {
+          setPhaseClock((prev) => {
+            if (
+              prev &&
+              prev.roundId === derivedClock.roundId &&
+              prev.kind === derivedClock.kind
+            ) {
+              return prev;
+            }
+            return derivedClock;
+          });
+        } else {
+          setPhaseClock((prev) =>
+            prev?.roundId === parsed.roundId ? null : prev
+          );
+        }
         if (parsed.status === "Settled" && program && walletPk) {
           refreshClaimables(program, walletPk);
         }
@@ -440,10 +572,20 @@ export default function App() {
   useEffect(() => {
     if (!topic) return;
     setRoundState(null);
+    setPhaseClock(null);
     connectSocket(topic);
     return () => closeSocket();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topic]);
+
+  useEffect(() => {
+    if (uiRound.state !== "BettingOpen") return;
+    setClockNowMs(Date.now());
+    const id = window.setInterval(() => {
+      setClockNowMs(Date.now());
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [uiRound.state, phaseClockForCurrentRound?.roundId, phaseClockForCurrentRound?.kind]);
 
   useEffect(() => {
     function onPointerDown(event: MouseEvent) {
@@ -460,7 +602,7 @@ export default function App() {
     };
   }, [walletMenuOpen]);
 
-    const isHome = location.pathname === "/";
+  const isHome = location.pathname === "/";
   const isFeed = location.pathname === "/feed";
   const isProfile = location.pathname === "/profile";
 
@@ -471,140 +613,141 @@ export default function App() {
           {/* ── Route content ── */}
           <div className="route-content">
             <Routes>
-            <Route
-              path="/feed"
-              element={
-                <FeedPage
-                  profileId={tapestryProfileId}
-                  walletConnected={Boolean(walletPk)}
-                  liveEvents={events}
-                  onConnectWallet={connectWallet}
-                />
-              }
-            />
-            <Route path="/profile" element={<ProfilePage walletPk={walletPk} profileId={tapestryProfileId} />} />
-            <Route path="/" element={
-              <>
-          <Panel className="score-shell">
-            <div className="score-team">
-              <span className="score-label">Alpha</span>
-              <div className="score-box">
-                <span className="score-value">{roundState?.alphaScore ?? 0}</span>
-                <span className="score-hint">Score</span>
-              </div>
-            </div>
-            <div className="center-state">
-              <div className={`status-pill ${uiRound.bannerTone}`}>
-                <span className="status-dot" />
-                {uiRound.statusLabel}
-              </div>
-              <div className="scoreline">
-                {(roundState?.alphaScore ?? 0).toString()}:
-                {(roundState?.betaScore ?? 0).toString()}
-              </div>
-              <span className="round-meta">
-                Round #{roundId?.toString() ?? "-"} · Move {roundState?.moveCount ?? 0}
-              </span>
-            </div>
-            <div className="score-team right">
-              <span className="score-label">Beta</span>
-              <div className="score-box">
-                <span className="score-value">{roundState?.betaScore ?? 0}</span>
-                <span className="score-hint">Score</span>
-              </div>
-            </div>
-          </Panel>
+              <Route
+                path="/feed"
+                element={
+                  <FeedPage
+                    profileId={tapestryProfileId}
+                    walletConnected={Boolean(walletPk)}
+                    liveEvents={events}
+                    onConnectWallet={connectWallet}
+                  />
+                }
+              />
+              <Route path="/profile" element={<ProfilePage walletPk={walletPk} profileId={tapestryProfileId} />} />
+              <Route path="/" element={
+                <>
+                  <Panel className="score-shell">
+                    <div className="center-state">
+                      <div className={`status-pill ${uiRound.bannerTone}`}>
+                        <span className="status-dot" />
+                        {uiRound.statusLabel}
+                      </div>
+                      <div className="scoreline-wrap">
+                        <svg className="phase-ring" viewBox="0 0 120 120" aria-hidden="true">
+                          <circle
+                            className="phase-ring-bg"
+                            cx="60"
+                            cy="60"
+                            r={PHASE_RING_RADIUS}
+                          />
+                          <circle
+                            className={`phase-ring-progress ${ringTone}`}
+                            cx="60"
+                            cy="60"
+                            r={PHASE_RING_RADIUS}
+                            strokeDasharray={PHASE_RING_CIRCUMFERENCE}
+                            strokeDashoffset={ringDashOffset}
+                          />
+                        </svg>
+                        <div className="scoreline">{scorelineText}</div>
+                      </div>
+                      <span className="round-meta">
+                        Round #{roundId?.toString() ?? "-"} · Move {roundState?.moveCount ?? 0}
+                      </span>
+                    </div>
+                  </Panel>
 
-          <section className="boards">
-            <SnakeBoard
-              side="alpha"
-              title="Alpha"
-              alive={roundState?.alphaAlive ?? false}
-              board={roundState?.alphaBoard ?? EMPTY_BOARD}
-            />
-            <SnakeBoard
-              side="beta"
-              title="Beta"
-              alive={roundState?.betaAlive ?? false}
-              board={roundState?.betaBoard ?? EMPTY_BOARD}
-            />
-          </section>
+                  <section className="boards">
+                    <SnakeBoard
+                      side="alpha"
+                      title="Alpha"
+                      alive={roundState?.alphaAlive ?? false}
+                      board={roundState?.alphaBoard ?? EMPTY_BOARD}
+                    />
+                    <SnakeBoard
+                      side="beta"
+                      title="Beta"
+                      alive={roundState?.betaAlive ?? false}
+                      board={roundState?.betaBoard ?? EMPTY_BOARD}
+                    />
+                  </section>
 
-          <Panel className="action-shell">
-            <div className="bet-grid">
-              <div className="segmented">
-                <LcdButton
-                  variant="tab"
-                  active={betChoice === "alpha"}
-                  icon="circle"
-                  onClick={() => setBetChoice("alpha")}
-                >
-                  Alpha
-                </LcdButton>
-                <LcdButton
-                  variant="tab"
-                  active={betChoice === "beta"}
-                  icon="change_history"
-                  onClick={() => setBetChoice("beta")}
-                >
-                  Beta
-                </LcdButton>
-              </div>
-              <label className="field">
-                <span>Bet Amount (SOL)</span>
-                <LcdInput
-                  value={betAmountSol}
-                  onChange={(e) => setBetAmountSol(e.target.value)}
-                  placeholder="0.02 (min 0.01, max 1)"
-                />
-              </label>
-              <LcdButton
-                variant="primary"
-                disabled={!canBet}
-                onClick={submitBet}
-              >
-                {busy === "placing_bet" ? "Placing..." : "Place Bet"}
-              </LcdButton>
-              <LcdButton
-                variant="secondary"
-                disabled={!program || !walletPk}
-                onClick={() => {
-                  if (program && walletPk) refreshClaimables(program, walletPk);
-                }}
-              >
-                Refresh
-              </LcdButton>
-            </div>
+                  <Panel className="action-shell">
+                    <div className="bet-grid">
+                      <div className="segmented">
+                        <LcdButton
+                          variant="tab"
+                          active={betChoice === "alpha"}
+                          icon="circle"
+                          onClick={() => setBetChoice("alpha")}
+                        >
+                          Alpha
+                        </LcdButton>
+                        <LcdButton
+                          variant="tab"
+                          active={betChoice === "beta"}
+                          icon="change_history"
+                          onClick={() => setBetChoice("beta")}
+                        >
+                          Beta
+                        </LcdButton>
+                      </div>
+                      <label className="field">
+                        <span>Bet Amount (SOL)</span>
+                        <LcdInput
+                          value={betAmountSol}
+                          onChange={(e) => setBetAmountSol(e.target.value)}
+                          placeholder="0.02 (min 0.01, max 1)"
+                        />
+                      </label>
+                      <LcdButton
+                        variant="primary"
+                        disabled={!canBet}
+                        onClick={submitBet}
+                      >
+                        {busy === "placing_bet" ? "Placing..." : "Place Bet"}
+                      </LcdButton>
+                      <LcdButton
+                        variant="secondary"
+                        disabled={!program || !walletPk}
+                        onClick={() => {
+                          if (program && walletPk) refreshClaimables(program, walletPk);
+                        }}
+                      >
+                        Refresh
+                      </LcdButton>
+                    </div>
 
-            <div className="claim-grid">
-              <label className="field">
-                <span>Claim Round</span>
-                <LcdSelect
-                  value={selectedClaimRound}
-                  onChange={(e) => setSelectedClaimRound(e.target.value)}
-                >
-                  {claimableRounds.length === 0 ? (
-                    <option value="">No claimable wins</option>
-                  ) : null}
-                  {claimableRounds.map((r) => (
-                    <option key={r.toString()} value={r.toString()}>
-                      Round {r.toString()}
-                    </option>
-                  ))}
-                </LcdSelect>
-              </label>
-              <LcdButton
-                variant="secondary"
-                disabled={!canClaim}
-                onClick={submitClaim}
-              >
-                {busy === "claiming" ? "Claiming..." : "Claim Winnings"}
-              </LcdButton>
-            </div>
+                    <div className="claim-grid">
+                      <label className="field">
+                        <span>Claim Round</span>
+                        <LcdSelect
+                          value={selectedClaimRound}
+                          onChange={(e) => setSelectedClaimRound(e.target.value)}
+                        >
+                          {claimableRounds.length === 0 ? (
+                            <option value="">No claimable wins</option>
+                          ) : null}
+                          {claimableRounds.map((r) => (
+                            <option key={r.toString()} value={r.toString()}>
+                              Round {r.toString()}
+                            </option>
+                          ))}
+                        </LcdSelect>
+                      </label>
+                      <LcdButton
+                        variant="secondary"
+                        disabled={!canClaim}
+                        onClick={submitClaim}
+                      >
+                        {busy === "claiming" ? "Claiming..." : "Claim Winnings"}
+                      </LcdButton>
+                    </div>
 
-          </Panel>
+                  </Panel>
 
-          {/* <section className="meta-grid">
+                  {/* <section className="meta-grid">
             <Panel className="meta-card">
               <div className="meta-title">Round</div>
               <div className="meta-line">ID: {roundId?.toString() ?? "-"}</div>
@@ -644,9 +787,9 @@ export default function App() {
               </div>
             ))}
           </Panel> */}
-              </>
-            } />
-          </Routes>
+                </>
+              } />
+            </Routes>
           </div>
 
           {/* ── Global toolbar — always visible on every route ── */}

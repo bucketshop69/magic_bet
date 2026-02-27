@@ -1,7 +1,7 @@
 export const LCD_THEME = {
   font: {
     display: '"VT323", "Courier New", monospace',
-    body: '"Inter", "Segoe UI", sans-serif',
+    body: '"VT323", "Courier New", monospace',
   },
   color: {
     appBgTop: "#8e9f76",

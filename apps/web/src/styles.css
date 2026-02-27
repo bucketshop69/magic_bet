@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=VT323&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=VT323&display=swap");
 
 :root {
   font-family: var(--font-body, "Inter", "Segoe UI", sans-serif);
@@ -182,8 +182,21 @@ body {
   border-top: 2px solid var(--color-border-strong);
   padding-top: var(--space-sm);
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: var(--space-xs);
+}
+
+.toolbar-nav {
+  grid-column: span 10;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-xs);
+}
+
+.toolbar-wallet {
+  grid-column: span 2;
+  display: grid;
+  position: relative;
 }
 
 .lcd-btn {
@@ -199,6 +212,89 @@ body {
   padding: 10px 12px;
   cursor: pointer;
   transition: background 120ms ease, transform 80ms ease;
+}
+
+.lcd-btn-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.lcd-btn-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.toolbar-power-btn .lcd-btn-content {
+  gap: 0;
+}
+
+.toolbar-power-btn .lcd-btn-icon {
+  font-size: 22px;
+}
+
+.toolbar-wallet .lcd-btn {
+  width: 100%;
+}
+
+.wallet-menu-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.wallet-trigger {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 20px;
+}
+
+.wallet-trigger .lcd-btn-content {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.wallet-dropdown {
+  position: absolute;
+  right: 0;
+  top: auto;
+  bottom: calc(100% + 6px);
+  width: max(180px, 100%);
+  z-index: 30;
+  background: var(--color-panel);
+  border: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  overflow: hidden;
+}
+
+.wallet-menu-item {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--color-border-soft);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  padding: 10px 12px;
+  font-family: var(--font-body);
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.wallet-menu-item:last-child {
+  border-bottom: 0;
+}
+
+.wallet-menu-item:hover {
+  background: #c1cfaa;
+}
+
+.wallet-menu-icon {
+  font-size: 18px;
+  line-height: 1;
 }
 
 .lcd-btn:hover {
@@ -346,6 +442,14 @@ body {
   }
 
   .toolbar {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
+  }
+
+  .toolbar-nav {
+    grid-column: auto;
+  }
+
+  .toolbar-wallet {
+    grid-column: auto;
   }
 }

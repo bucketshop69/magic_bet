@@ -33,6 +33,18 @@ All notable changes to this project are documented in this file.
   - `@solana/wallet-adapter-react`
   - `@solana/wallet-adapter-react-ui`
   - Phantom, Solflare, Coinbase Wallet, Trust adapters
+- Added retro game SFX pipeline in web app:
+  - `apps/web/src/lib/retroSfx.ts` audio pool + browser gesture unlock
+  - local SFX assets in `apps/web/src/assets/*` (`bet_open_game_start`, `eat`, `win`, `lose`)
+- Added board outcome FX hooks for winner/loser/draw rendering in `SnakeBoard`:
+  - winner crackle/pulse
+  - loser boom/shake
+  - draw scan/pulse
+- Added branded beta snake head icon asset for web app identity:
+  - `apps/web/public/beta-snake-head.svg`
+- Added in-board micro FX and telemetry:
+  - derived per-board move direction labels (`Up`/`Down`/`Left`/`Right`)
+  - food-consume pop/blast animation on consumed food cells
 
 ### Changed
 
@@ -46,6 +58,19 @@ All notable changes to this project are documented in this file.
 - Frontend Tapestry integration now defaults to crank proxy mode (`${VITE_CRANK_HTTP_URL}/social`) with optional direct mode override via `VITE_TAPESTRY_BASE_URL`.
 - Profile creation username format changed from `xxxx...yyyy` to compact `xxxxyyyy` (first 4 + last 4).
 - Crank Tapestry client now appends API key via query param and redacts key from logged URLs.
+- Score shell UX updated with top-right mute toggle that does not shift the centered status/timer panel.
+- Removed the toolbar-level sound test button beside navigation/ranking; sound control is now scoped to gameplay panel.
+- Round lifecycle cues now drive in-game effects:
+  - betting open and game start audio cues
+  - eat and elimination cues during active rounds
+  - settle-time winner/loser/draw board FX with paired outcome sounds
+- App favicon now uses the beta snake head icon (`/beta-snake-head.svg`).
+- Board visual theming polish:
+  - Alpha identity highlighted in red for board icon and score treatment
+  - Alpha snake body/head accents tuned to match UI identity
+  - Beta food changed to red variant and food rendered at smaller inner-circle size
+- Feed panel layout now uses a fixed viewport-height shell with internal scrolling.
+- Global scrollbar styling now matches the LCD soft-green theme across the app.
 
 ### Fixed
 
@@ -57,6 +82,8 @@ All notable changes to this project are documented in this file.
 - Fixed follower and feed endpoint mapping mismatches through legacy->new endpoint rewrites in proxy layer.
 - Fixed round winner parsing for Anchor enum/option shapes (`{ some: { alpha } }`) to prevent false `UNKNOWN` result text.
 - Fixed round-result content text generation to gracefully handle unknown/invalid winners without misleading winner labels.
+- Fixed browser autoplay-policy issues for game SFX by priming audio only after user gesture before playback.
+- Fixed SFX mute UX by persisting mute/unmute preference in `localStorage` across reloads.
 
 ### Validation
 

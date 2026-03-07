@@ -4,7 +4,7 @@ import * as anchor from "@coral-xyz/anchor";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey } from "@solana/web3.js";
-import { SnakeBoard } from "./components/SnakeBoard";
+import { SnakeBoard, type BoardResultFx } from "./components/SnakeBoard";
 import { LcdButton } from "./components/ui/LcdButton";
 import { LcdInput } from "./components/ui/LcdInput";
 import { LcdSelect } from "./components/ui/LcdSelect";
@@ -12,6 +12,7 @@ import { NavTabButton } from "./components/ui/NavTabButton";
 import { Panel } from "./components/ui/Panel";
 import { parseCrankStatus, parseWsEvent } from "./lib/adapters";
 import { APP_CONFIG } from "./lib/config";
+import { useRetroSfx } from "./lib/retroSfx";
 import {
   claimWinnings,
   createConnection,
@@ -40,6 +41,11 @@ type PhaseClock = {
   kind: "betting" | "game";
   roundId: string;
   startedAtMs: number;
+};
+
+type BoardFxState = {
+  alpha: BoardResultFx;
+  beta: BoardResultFx;
 };
 
 function short(pk?: string) {
@@ -80,6 +86,45 @@ function derivePhaseClockFromRoundState(state: RoundStateV1): PhaseClock | null 
   return null;
 }
 
+function winnerFromRoundState(state: RoundStateV1): "alpha" | "beta" | "draw" | null {
+  const winner = state.winner?.toLowerCase();
+  if (winner === "alpha" || winner === "beta" || winner === "draw") {
+    return winner;
+  }
+  return null;
+}
+
+function inferWinnerFromSettledState(
+  state: RoundStateV1
+): "alpha" | "beta" | "draw" | null {
+  const direct = winnerFromRoundState(state);
+  if (direct) return direct;
+  if (state.status !== "Settled") return null;
+
+  if (state.alphaAlive && !state.betaAlive) return "alpha";
+  if (state.betaAlive && !state.alphaAlive) return "beta";
+  if (state.alphaScore > state.betaScore) return "alpha";
+  if (state.betaScore > state.alphaScore) return "beta";
+  if (state.alphaScore === state.betaScore) return "draw";
+  return null;
+}
+
+function inferWinnerFromLiveState(
+  state: RoundStateV1
+): "alpha" | "beta" | "draw" | null {
+  const direct = winnerFromRoundState(state);
+  if (direct) return direct;
+
+  if (state.alphaAlive && !state.betaAlive) return "alpha";
+  if (state.betaAlive && !state.alphaAlive) return "beta";
+  if (!state.alphaAlive && !state.betaAlive && state.alphaScore === state.betaScore) {
+    return "draw";
+  }
+  if (state.alphaScore > state.betaScore) return "alpha";
+  if (state.betaScore > state.alphaScore) return "beta";
+  return null;
+}
+
 export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -92,6 +137,7 @@ export default function App() {
     signAllTransactions,
   } = useWallet();
   const { setVisible: setWalletModalVisible } = useWalletModal();
+  const { playSfx, unlockAudio, isMuted, toggleMute } = useRetroSfx();
   const [walletPk, setWalletPk] = useState<PublicKey | null>(null);
   const [tapestryProfileId, setTapestryProfileId] = useState<string | null>(null);
   const [connection] = useState(() => createConnection());
@@ -111,6 +157,10 @@ export default function App() {
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
   const [phaseClock, setPhaseClock] = useState<PhaseClock | null>(null);
   const [clockNowMs, setClockNowMs] = useState(() => Date.now());
+  const [boardFx, setBoardFx] = useState<BoardFxState>({
+    alpha: null,
+    beta: null,
+  });
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<number | null>(null);
@@ -120,6 +170,10 @@ export default function App() {
   const lastRoundRef = useRef<string | null>(null);
   const walletMenuRef = useRef<HTMLDivElement | null>(null);
   const walletSyncRef = useRef<string | null>(null);
+  const boardFxTimeoutRef = useRef<number | null>(null);
+  const lastRoundStateRef = useRef<RoundStateV1 | null>(null);
+  const settledFxRoundRef = useRef<string | null>(null);
+  const transitionCueRef = useRef<string | null>(null);
 
   const addEvent = (line: string) => {
     setEvents((prev) => [line, ...prev].slice(0, 14));
@@ -183,16 +237,149 @@ export default function App() {
         ? Math.max(0, Math.min(1, gameRemainingMoves / GAME_WINDOW_SECONDS))
         : 1;
   const ringDashOffset = PHASE_RING_CIRCUMFERENCE * (1 - ringProgress);
-  const scorelineText =
+  const scorelineDisplay =
     uiRound.state === "BettingOpen"
       ? Math.ceil(bettingRemainingSeconds).toString()
-      : `${(roundState?.alphaScore ?? 0).toString()}:${(roundState?.betaScore ?? 0).toString()}`;
+      : (
+        <>
+          <span className="scoreline-alpha">{(roundState?.alphaScore ?? 0).toString()}</span>
+          <span className="scoreline-separator">:</span>
+          <span className="scoreline-beta">{(roundState?.betaScore ?? 0).toString()}</span>
+        </>
+      );
   const ringTone =
     uiRound.state === "BettingOpen"
       ? "betting"
       : uiRound.state === "InProgress"
         ? "game"
         : "idle";
+
+  function clearBoardFx() {
+    setBoardFx((prev) => {
+      if (!prev.alpha && !prev.beta) return prev;
+      return { alpha: null, beta: null };
+    });
+  }
+
+  function triggerSettleBoardFx(nextState: RoundStateV1) {
+    const winner = inferWinnerFromSettledState(nextState);
+    if (!winner) return;
+    triggerOutcomeFx(nextState.roundId, winner);
+  }
+
+  function triggerOutcomeFx(
+    roundId: string,
+    winner: "alpha" | "beta" | "draw"
+  ) {
+    if (settledFxRoundRef.current === roundId) return;
+    if (!winner) return;
+
+    settledFxRoundRef.current = roundId;
+    if (boardFxTimeoutRef.current) {
+      window.clearTimeout(boardFxTimeoutRef.current);
+      boardFxTimeoutRef.current = null;
+    }
+
+    if (winner === "alpha") {
+      setBoardFx({ alpha: "winner", beta: "loser" });
+      playSfx("win");
+      window.setTimeout(() => playSfx("lose"), 320);
+    } else if (winner === "beta") {
+      setBoardFx({ alpha: "loser", beta: "winner" });
+      playSfx("win");
+      window.setTimeout(() => playSfx("lose"), 320);
+    } else {
+      setBoardFx({ alpha: "draw", beta: "draw" });
+      playSfx("draw");
+      window.setTimeout(() => playSfx("draw"), 220);
+    }
+
+    boardFxTimeoutRef.current = window.setTimeout(() => {
+      setBoardFx({ alpha: null, beta: null });
+      boardFxTimeoutRef.current = null;
+    }, 2300);
+  }
+
+  function applyRoundState(nextState: RoundStateV1) {
+    const prevState = lastRoundStateRef.current;
+    if (prevState && prevState.roundId !== nextState.roundId) {
+      settledFxRoundRef.current = null;
+      clearBoardFx();
+    }
+
+    const enteringBettingOpen =
+      nextState.status === "Active" &&
+      (!prevState ||
+        prevState.roundId !== nextState.roundId ||
+        prevState.status !== "Active");
+    const enteringGameLoop =
+      nextState.status === "InProgress" &&
+      (!prevState ||
+        prevState.roundId !== nextState.roundId ||
+        prevState.status !== "InProgress");
+
+    if (enteringBettingOpen) {
+      playSfx("bet_open");
+    } else if (enteringGameLoop) {
+      playSfx("game_start");
+    }
+
+    if (
+      prevState &&
+      prevState.roundId === nextState.roundId &&
+      nextState.status === "InProgress" &&
+      (nextState.alphaScore > prevState.alphaScore ||
+        nextState.betaScore > prevState.betaScore)
+    ) {
+      playSfx("eat");
+    }
+
+    if (
+      prevState &&
+      prevState.roundId === nextState.roundId &&
+      prevState.alphaAlive &&
+      !nextState.alphaAlive
+    ) {
+      playSfx("lose");
+    }
+    if (
+      prevState &&
+      prevState.roundId === nextState.roundId &&
+      prevState.betaAlive &&
+      !nextState.betaAlive
+    ) {
+      playSfx("lose");
+    }
+
+    setRoundState(nextState);
+
+    const derivedClock = derivePhaseClockFromRoundState(nextState);
+    if (derivedClock) {
+      setPhaseClock((prev) => {
+        if (
+          prev &&
+          prev.roundId === derivedClock.roundId &&
+          prev.kind === derivedClock.kind
+        ) {
+          return prev;
+        }
+        return derivedClock;
+      });
+    } else {
+      setPhaseClock((prev) =>
+        prev?.roundId === nextState.roundId ? null : prev
+      );
+    }
+
+    if (nextState.status === "Settled") {
+      triggerSettleBoardFx(nextState);
+      if (program && walletPk) {
+        refreshClaimables(program, walletPk);
+      }
+    }
+
+    lastRoundStateRef.current = nextState;
+  }
 
   async function refreshClaimables(p: anchor.Program, user: PublicKey) {
     try {
@@ -249,6 +436,7 @@ export default function App() {
 
   async function connectWallet() {
     try {
+      await unlockAudio();
       if (!wallet) {
         setWalletModalVisible(true);
         return;
@@ -369,6 +557,16 @@ export default function App() {
       }
 
       if (parsed.type === "round_transition_v1") {
+        const cueKey = `${parsed.roundId}:${parsed.to}`;
+        if (transitionCueRef.current !== cueKey) {
+          if (parsed.to === "BETTING_OPEN") {
+            playSfx("bet_open");
+          } else if (parsed.to === "GAME_LOOP") {
+            playSfx("game_start");
+          }
+          transitionCueRef.current = cueKey;
+        }
+
         if (parsed.to === "BETTING_OPEN") {
           setPhaseClock({
             kind: "betting",
@@ -382,6 +580,17 @@ export default function App() {
             startedAtMs: normalizeEpochMs(parsed.ts),
           });
         } else if (parsed.to === "SETTLE" || parsed.to === "CLEANUP" || parsed.to === "READY") {
+          const latest = lastRoundStateRef.current;
+          if (
+            (parsed.to === "SETTLE" || parsed.to === "CLEANUP") &&
+            latest &&
+            latest.roundId === parsed.roundId
+          ) {
+            const inferred = inferWinnerFromLiveState(latest);
+            if (inferred) {
+              triggerOutcomeFx(parsed.roundId, inferred);
+            }
+          }
           setPhaseClock((prev) =>
             prev?.roundId === parsed.roundId ? null : prev
           );
@@ -393,27 +602,7 @@ export default function App() {
       }
 
       if (parsed.type === "snapshot_v1") {
-        setRoundState(parsed.roundState);
-        const derivedClock = derivePhaseClockFromRoundState(parsed.roundState);
-        if (derivedClock) {
-          setPhaseClock((prev) => {
-            if (
-              prev &&
-              prev.roundId === derivedClock.roundId &&
-              prev.kind === derivedClock.kind
-            ) {
-              return prev;
-            }
-            return derivedClock;
-          });
-        } else {
-          setPhaseClock((prev) =>
-            prev?.roundId === parsed.roundState.roundId ? null : prev
-          );
-        }
-        if (parsed.roundState.status === "Settled" && program && walletPk) {
-          refreshClaimables(program, walletPk);
-        }
+        applyRoundState(parsed.roundState);
         addEvent(
           `Snapshot round ${parsed.roundState.roundId} move ${parsed.roundState.moveCount}`
         );
@@ -421,27 +610,7 @@ export default function App() {
       }
 
       if (parsed.type === "round_state_v1") {
-        setRoundState(parsed);
-        const derivedClock = derivePhaseClockFromRoundState(parsed);
-        if (derivedClock) {
-          setPhaseClock((prev) => {
-            if (
-              prev &&
-              prev.roundId === derivedClock.roundId &&
-              prev.kind === derivedClock.kind
-            ) {
-              return prev;
-            }
-            return derivedClock;
-          });
-        } else {
-          setPhaseClock((prev) =>
-            prev?.roundId === parsed.roundId ? null : prev
-          );
-        }
-        if (parsed.status === "Settled" && program && walletPk) {
-          refreshClaimables(program, walletPk);
-        }
+        applyRoundState(parsed);
       }
     };
 
@@ -467,6 +636,7 @@ export default function App() {
   async function submitBet() {
     if (!walletPk || !program || !roundId) return;
     try {
+      await unlockAudio();
       setBusy("placing_bet");
       const amount = lamportsFromSol(betAmountSol);
       const sig = await placeBet(program, walletPk, roundId, betChoice, amount);
@@ -493,6 +663,7 @@ export default function App() {
     if (!walletPk || !program || !selectedClaimRound) return;
     const claimRoundId = BigInt(selectedClaimRound);
     try {
+      await unlockAudio();
       setBusy("claiming");
       const bet = await fetchBet(program, claimRoundId, walletPk);
       if (!bet) {
@@ -573,10 +744,21 @@ export default function App() {
     if (!topic) return;
     setRoundState(null);
     setPhaseClock(null);
+    clearBoardFx();
+    settledFxRoundRef.current = null;
+    lastRoundStateRef.current = null;
     connectSocket(topic);
     return () => closeSocket();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topic]);
+
+  useEffect(() => {
+    return () => {
+      if (boardFxTimeoutRef.current) {
+        window.clearTimeout(boardFxTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (uiRound.state !== "BettingOpen") return;
@@ -628,6 +810,17 @@ export default function App() {
               <Route path="/" element={
                 <>
                   <Panel className="score-shell">
+                    <LcdButton
+                      variant="secondary"
+                      icon={isMuted ? "volume_off" : "volume_up"}
+                      className="score-sfx-toggle"
+                      aria-label={isMuted ? "Unmute sound effects" : "Mute sound effects"}
+                      title={isMuted ? "Unmute SFX" : "Mute SFX"}
+                      onClick={() => {
+                        void unlockAudio();
+                        toggleMute();
+                      }}
+                    />
                     <div className="center-state">
                       <div className={`status-pill ${uiRound.bannerTone}`}>
                         <span className="status-dot" />
@@ -650,7 +843,7 @@ export default function App() {
                             strokeDashoffset={ringDashOffset}
                           />
                         </svg>
-                        <div className="scoreline">{scorelineText}</div>
+                        <div className="scoreline">{scorelineDisplay}</div>
                       </div>
                       <span className="round-meta">
                         Round #{roundId?.toString() ?? "-"} · Move {roundState?.moveCount ?? 0}
@@ -664,12 +857,14 @@ export default function App() {
                       title="Alpha"
                       alive={roundState?.alphaAlive ?? false}
                       board={roundState?.alphaBoard ?? EMPTY_BOARD}
+                      resultFx={boardFx.alpha}
                     />
                     <SnakeBoard
                       side="beta"
                       title="Beta"
                       alive={roundState?.betaAlive ?? false}
                       board={roundState?.betaBoard ?? EMPTY_BOARD}
+                      resultFx={boardFx.beta}
                     />
                   </section>
 
@@ -680,6 +875,7 @@ export default function App() {
                           variant="tab"
                           active={betChoice === "alpha"}
                           icon="circle"
+                          className="bet-alpha-tab"
                           onClick={() => setBetChoice("alpha")}
                         >
                           Alpha
